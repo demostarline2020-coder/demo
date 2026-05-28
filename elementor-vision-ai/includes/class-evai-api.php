@@ -26,7 +26,14 @@ class API {
     }
 
     public static function orchestrator_health(): \WP_REST_Response {
-        $baseUrl = untrailingslashit(Settings::get('orchestrator_url', 'http://127.0.0.1:4100'));
+        $baseUrl = self::get_base_url();
+        if (is_wp_error($baseUrl)) {
+            return new \WP_REST_Response([
+                'ok' => false,
+                'error' => $baseUrl->get_error_message(),
+            ], 400);
+        }
+
         $response = wp_remote_get($baseUrl . '/health', ['timeout' => 5]);
 
         if (is_wp_error($response)) {
@@ -45,7 +52,11 @@ class API {
             return new \WP_REST_Response(['error' => 'Image is required.'], 400);
         }
 
-        $baseUrl = untrailingslashit(Settings::get('orchestrator_url', 'http://127.0.0.1:4100'));
+        $baseUrl = self::get_base_url();
+        if (is_wp_error($baseUrl)) {
+            return new \WP_REST_Response(['error' => $baseUrl->get_error_message()], 400);
+        }
+
         $preflight = wp_remote_get($baseUrl . '/health', ['timeout' => 5]);
         if (is_wp_error($preflight)) {
             return new \WP_REST_Response(['error' => self::build_connectivity_error($preflight, $baseUrl)], 503);
@@ -72,6 +83,19 @@ class API {
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
         return new \WP_REST_Response($body, wp_remote_retrieve_response_code($response));
+    }
+
+
+    private static function get_base_url() {
+        $raw = trim(Settings::get('orchestrator_url', ''));
+        if ($raw === '') {
+            return new \WP_Error(
+                'evai_missing_worker_url',
+                'AI Server URL is missing. Go to Elementor Vision AI → Settings and add your AI Server URL (example: https://ai.youragency.com). Gemini API key alone is not enough because template rendering runs on the AI server.'
+            );
+        }
+
+        return untrailingslashit($raw);
     }
 
     private static function build_connectivity_error(\WP_Error $error, string $baseUrl): string {
