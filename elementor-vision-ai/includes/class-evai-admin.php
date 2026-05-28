@@ -42,13 +42,13 @@ class Admin {
                 <?php settings_fields('evai_settings_group'); ?>
                 <table class="form-table">
                     <tr>
-                        <th scope="row">Gemini API Key</th>
+                        <th scope="row">Gemini API Key (only for Gemini backend)</th>
                         <td><input type="password" name="<?php echo esc_attr(Settings::OPTION_KEY); ?>[gemini_api_key]" value="<?php echo esc_attr(Settings::get('gemini_api_key')); ?>" class="regular-text" /></td>
                     </tr>
                     <tr>
                         <th scope="row">Managed Worker URL</th>
                         <td><input type="url" name="<?php echo esc_attr(Settings::OPTION_KEY); ?>[orchestrator_url]" value="<?php echo esc_attr(Settings::get('orchestrator_url', 'https://your-managed-worker.example.com')); ?>" class="regular-text" />
-                        <p class="description">Example: https://worker.youragency.com (must expose /health and /generate-template)</p></td>
+                        <p class="description">Paste URL provided by agency/tech team. Example: https://worker.youragency.com (must expose /health and /generate-template)</p></td>
                     </tr>
                                     <tr>
                         <th scope="row">AI Backend</th>
