@@ -69,6 +69,10 @@ const compare = (imgA, imgB) => {
   return 1 - mismatched / (width * height);
 };
 
+app.get('/health', (req, res) => {
+  res.json({ ok: true, service: 'evai-orchestrator' });
+});
+
 app.post('/generate-template', async (req, res) => {
   try {
     const { imageBase64, mimeType, geminiApiKey } = req.body;
