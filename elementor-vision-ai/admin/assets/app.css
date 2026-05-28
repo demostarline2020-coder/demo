@@ -1,0 +1,7 @@
+.evai-card{background:#fff;padding:24px;border-radius:12px;max-width:760px;box-shadow:0 2px 14px rgba(0,0,0,.08)}
+.evai-input{display:block;margin-bottom:14px}
+.evai-status{margin:12px 0;color:#334155}
+.evai-preview{max-width:100%;border:1px solid #e2e8f0;border-radius:8px;margin:8px 0 12px}
+.evai-health{padding:10px 12px;border-radius:8px;margin:0 0 12px;font-size:13px}
+.evai-health.ok{background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0}
+.evai-health.bad{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
