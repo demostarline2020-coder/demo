@@ -13,11 +13,16 @@ const storage = multer.diskStorage({
   }
 });
 
-const allowedMimeTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+const allowedMimeTypes = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
+const allowedExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 
 const fileFilter = (_req, file, cb) => {
-  if (allowedMimeTypes.includes(file.mimetype)) cb(null, true);
-  else cb(new Error('Only PNG, JPG, and WebP files are supported.'));
+  const mime = (file.mimetype || '').toLowerCase();
+  const ext = path.extname(file.originalname || '').toLowerCase();
+
+  if (allowedMimeTypes.has(mime) || allowedExtensions.has(ext)) return cb(null, true);
+
+  return cb(new Error('Only PNG, JPG, JPEG, and WebP files are supported.'));
 };
 
 export const upload = multer({

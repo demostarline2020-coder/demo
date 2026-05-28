@@ -12,6 +12,17 @@ const toSvg = (filePath, params) =>
     });
   });
 
+const tryRemoveBackground = async (inputBuffer) => {
+  try {
+    const bgRemovedBuffer = await removeBackground(inputBuffer, {
+      output: { quality: 0.95, format: 'image/png' }
+    });
+    return Buffer.from(bgRemovedBuffer);
+  } catch {
+    return inputBuffer;
+  }
+};
+
 export const processAndVectorize = async (inputPath) => {
   const base = path.parse(inputPath).name;
   const tmpDir = path.resolve('tmp');
@@ -21,15 +32,8 @@ export const processAndVectorize = async (inputPath) => {
   const preprocessedPath = path.join(tmpDir, `${base}-bw.png`);
 
   const inputBuffer = await fs.readFile(inputPath);
-
-  const bgRemovedBuffer = await removeBackground(inputBuffer, {
-    output: {
-      quality: 0.95,
-      format: 'image/png'
-    }
-  });
-
-  await fs.writeFile(bgRemovedPath, Buffer.from(bgRemovedBuffer));
+  const cleanedBuffer = await tryRemoveBackground(inputBuffer);
+  await fs.writeFile(bgRemovedPath, cleanedBuffer);
 
   const meta = await sharp(bgRemovedPath).metadata();
   const hasTransparency = Boolean(meta.hasAlpha);
