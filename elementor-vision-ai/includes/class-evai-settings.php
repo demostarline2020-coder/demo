@@ -19,7 +19,8 @@ class Settings {
             'sanitize_callback' => [self::class, 'sanitize'],
             'default' => [
                 'gemini_api_key' => '',
-                'orchestrator_url' => 'http://127.0.0.1:4100',
+                'orchestrator_url' => 'https://your-managed-worker.example.com',
+                'ai_backend' => 'gemini',
             ],
         ]);
     }
@@ -28,6 +29,7 @@ class Settings {
         return [
             'gemini_api_key' => sanitize_text_field($input['gemini_api_key'] ?? ''),
             'orchestrator_url' => esc_url_raw($input['orchestrator_url'] ?? ''),
+            'ai_backend' => in_array(($input['ai_backend'] ?? 'gemini'), ['gemini','ollama'], true) ? $input['ai_backend'] : 'gemini',
         ];
     }
 

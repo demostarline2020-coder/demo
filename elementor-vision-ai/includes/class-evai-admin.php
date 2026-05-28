@@ -37,7 +37,7 @@ class Admin {
     public static function render_settings(): void {
         ?>
         <div class="wrap">
-            <h1>Elementor Vision AI Settings</h1>
+            <h1>Elementor Vision AI Settings</h1><p><strong>Recommended for agencies:</strong> use a Managed Worker URL so clients do not need Node.js on hosting.</p>
             <form method="post" action="options.php">
                 <?php settings_fields('evai_settings_group'); ?>
                 <table class="form-table">
@@ -46,8 +46,19 @@ class Admin {
                         <td><input type="password" name="<?php echo esc_attr(Settings::OPTION_KEY); ?>[gemini_api_key]" value="<?php echo esc_attr(Settings::get('gemini_api_key')); ?>" class="regular-text" /></td>
                     </tr>
                     <tr>
-                        <th scope="row">Orchestrator URL</th>
-                        <td><input type="url" name="<?php echo esc_attr(Settings::OPTION_KEY); ?>[orchestrator_url]" value="<?php echo esc_attr(Settings::get('orchestrator_url', 'http://127.0.0.1:4100')); ?>" class="regular-text" /></td>
+                        <th scope="row">Managed Worker URL</th>
+                        <td><input type="url" name="<?php echo esc_attr(Settings::OPTION_KEY); ?>[orchestrator_url]" value="<?php echo esc_attr(Settings::get('orchestrator_url', 'https://your-managed-worker.example.com')); ?>" class="regular-text" />
+                        <p class="description">Example: https://worker.youragency.com (must expose /health and /generate-template)</p></td>
+                    </tr>
+                                    <tr>
+                        <th scope="row">AI Backend</th>
+                        <td>
+                            <select name="<?php echo esc_attr(Settings::OPTION_KEY); ?>[ai_backend]">
+                                <option value="gemini" <?php selected(Settings::get('ai_backend', 'gemini'), 'gemini'); ?>>Gemini Vision (API key)</option>
+                                <option value="ollama" <?php selected(Settings::get('ai_backend', 'gemini'), 'ollama'); ?>>Ollama LLaVA (free/local)</option>
+                            </select>
+                            <p class="description">Use Ollama for no per-request AI cost (self-hosted GPU/CPU required on managed worker).</p>
+                        </td>
                     </tr>
                 </table>
                 <?php submit_button('Save Settings'); ?>

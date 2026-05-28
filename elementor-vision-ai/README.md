@@ -1,36 +1,39 @@
 # Elementor Vision AI (MVP)
 
-## What it does
-Upload a screenshot in WP Admin, generate an Elementor JSON template via Gemini Vision analysis, run iterative visual reconstruction (Playwright + pixelmatch), preview result, and download importable JSON.
+## Managed Worker model (recommended)
+For agencies and non-technical clients, deploy one managed worker (Node orchestrator) once, then point all client sites to that URL from plugin settings.
+
+Clients only do:
+1. Install plugin
+2. Add Worker URL
+3. Choose AI backend
+4. Upload screenshot and generate
+
+No Node.js required on client hosting.
+
+## AI backend options
+- **Gemini Vision**: cloud API key based.
+- **Ollama LLaVA (free/local)**: no per-request AI cost; run Ollama on managed worker infrastructure.
 
 ## Install
 1. Copy plugin folder into `wp-content/plugins/elementor-vision-ai`.
-2. Start orchestrator:
+2. Deploy/start your managed worker:
    ```bash
    cd services/orchestrator
    npm install
    npm start
    ```
 3. Activate plugin in WordPress.
-4. Go to **Elementor Vision AI > Settings** and set Gemini API key.
-5. Confirm **Orchestrator URL** points to a host reachable from the web server process (not your browser machine).
-6. Go to **Elementor Vision AI** and generate template.
+4. Go to **Elementor Vision AI > Settings**:
+   - set **Managed Worker URL**
+   - select **AI Backend** (Gemini or Ollama)
+   - if Gemini selected, add Gemini API key
+5. Generate template from screenshot.
 
-## Fix for `cURL error 7` (connection refused)
-If you see `Failed to connect to 127.0.0.1:4100`, WordPress cannot reach the Node orchestrator.
+## Worker health check
+Your worker must expose:
+- `GET /health`
+- `POST /generate-template`
 
-- Ensure orchestrator is running: `npm start` in `services/orchestrator`.
-- Test from the same server/container running PHP/WordPress:
-  ```bash
-  curl http://127.0.0.1:4100/health
-  ```
-- If WordPress runs in Docker/Kubernetes, `127.0.0.1` may be wrong. Use the service/container hostname in plugin settings, e.g. `http://evai-orchestrator:4100`.
-
-## Architecture
-- WP Plugin (PHP): UI + REST proxy + secure settings storage.
-- React Admin UI: upload, generation trigger, status, preview, JSON download.
-- Node Orchestrator: Gemini vision analysis, preset matching, Elementor JSON assembly, iterative visual diff loop, schema-friendly output.
-
-## MVP limits
-- Currently supports core structure widgets and container-based layouts.
-- Similarity scoring is pixel-based and refined in a 3-pass loop.
+## Docker note
+If WordPress runs in Docker/K8s, do not use `127.0.0.1` unless worker is in same container. Use service hostname instead.

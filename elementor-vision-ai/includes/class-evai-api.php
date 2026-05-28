@@ -57,6 +57,7 @@ class API {
             'mimeType' => $file['type'] ?? 'image/png',
             'filename' => $file['name'] ?? 'upload.png',
             'geminiApiKey' => Settings::get('gemini_api_key'),
+            'aiBackend' => Settings::get('ai_backend', 'gemini'),
         ];
 
         $response = wp_remote_post($baseUrl . '/generate-template', [

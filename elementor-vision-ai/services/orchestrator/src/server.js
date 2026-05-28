@@ -25,6 +25,28 @@ const geminiCall = async (apiKey, imageBase64, mimeType) => {
   return JSON.parse(json.candidates?.[0]?.content?.parts?.[0]?.text || '{}');
 };
 
+
+const ollamaCall = async (imageBase64, mimeType) => {
+  const ollamaUrl = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+  const resp = await fetch(`${ollamaUrl}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: process.env.OLLAMA_MODEL || 'llava:7b',
+      stream: false,
+      messages: [{
+        role: 'user',
+        content: 'Analyze this webpage screenshot and return strict JSON with sections, hierarchy, typography, spacing, colors, widgets, responsive hints.',
+        images: [imageBase64]
+      }],
+      format: 'json'
+    })
+  });
+  if (!resp.ok) throw new Error(`Ollama failed: ${resp.status}`);
+  const json = await resp.json();
+  return JSON.parse(json.message?.content || '{}');
+};
+
 const buildElementorJson = (analysis) => ({
   version: '0.4',
   title: 'Elementor Vision AI Template',
@@ -75,10 +97,16 @@ app.get('/health', (req, res) => {
 
 app.post('/generate-template', async (req, res) => {
   try {
-    const { imageBase64, mimeType, geminiApiKey } = req.body;
-    if (!imageBase64 || !geminiApiKey) return res.status(400).json({ error: 'Missing image or API key' });
+    const { imageBase64, mimeType, geminiApiKey, aiBackend } = req.body;
+    if (!imageBase64) return res.status(400).json({ error: 'Missing image' });
 
-    let analysis = await geminiCall(geminiApiKey, imageBase64, mimeType || 'image/png');
+    let analysis;
+    if (aiBackend === 'ollama') {
+      analysis = await ollamaCall(imageBase64, mimeType || 'image/png');
+    } else {
+      if (!geminiApiKey) return res.status(400).json({ error: 'Missing Gemini API key' });
+      analysis = await geminiCall(geminiApiKey, imageBase64, mimeType || 'image/png');
+    }
     analysis.presets = Object.keys(PRESETS).filter(p => JSON.stringify(analysis).toLowerCase().includes(p.split('-')[0]));
 
     let best = { score: 0, json: null, preview: null };
