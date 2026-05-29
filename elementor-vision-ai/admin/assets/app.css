@@ -10,3 +10,5 @@
 .evai-settings-wrap .evai-field-group{margin-top:12px}
 .evai-settings-wrap .evai-field-group label{display:block;margin-bottom:6px}
 .evai-settings-wrap details summary{cursor:pointer;margin-bottom:10px}
+.evai-actions{display:flex;gap:10px;align-items:center;margin:8px 0 10px}
+.evai-test-output{white-space:pre-wrap;background:#f8fafc;border:1px solid #dcdcde;border-radius:8px;padding:12px;max-width:100%;overflow:auto}

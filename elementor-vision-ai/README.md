@@ -54,3 +54,14 @@ https://ai.youragency.com
 - Gemini mode: WordPress calls Google Gemini directly and generates Elementor JSON inside the plugin.
 - Ollama mode: WordPress calls your AI server because Ollama must run on your own infrastructure.
 - Admin UI: upload screenshot, generate template, preview image, download JSON.
+
+## Temporary Gemini debug test
+If template generation times out, use **Test Gemini Only** on the upload screen.
+
+This sends the uploaded screenshot to Gemini with only this prompt:
+
+```text
+Describe this screenshot in 5 bullet points.
+```
+
+If the test is fast but **Generate Template** times out, the issue is likely the Elementor JSON generation prompt or JSON processing pipeline. Debug details are written to the WordPress PHP error log, including model, timestamps, image size, prompt length, exact prompt, raw response, and the processing stage reached.
