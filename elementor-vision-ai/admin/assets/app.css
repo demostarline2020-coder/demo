@@ -12,3 +12,5 @@
 .evai-settings-wrap details summary{cursor:pointer;margin-bottom:10px}
 .evai-actions{display:flex;gap:10px;align-items:center;margin:8px 0 10px}
 .evai-test-output{white-space:pre-wrap;background:#f8fafc;border:1px solid #dcdcde;border-radius:8px;padding:12px;max-width:100%;overflow:auto}
+.evai-raw-wrap{margin:14px 0}
+.evai-raw-output{white-space:pre-wrap;background:#111827;color:#e5e7eb;border-radius:8px;padding:12px;max-height:520px;overflow:auto}

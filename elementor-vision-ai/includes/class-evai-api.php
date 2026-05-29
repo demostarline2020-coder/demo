@@ -122,63 +122,41 @@ class API {
         if (is_wp_error($result)) {
             return self::gemini_error_response($result, 502);
         }
+
         $model = $result['model'];
+        $extractedJson = self::extract_json_text($result['text']);
+        $savedRaw = self::save_raw_gemini_response($result['raw_body'], $model);
+        if (is_wp_error($savedRaw)) {
+            self::log_gemini('raw_response_save_failed', $model, [
+                'error' => $savedRaw->get_error_message(),
+            ]);
+            $savedRaw = [
+                'path' => '',
+                'url' => '',
+                'error' => $savedRaw->get_error_message(),
+            ];
+        }
 
-        self::log_gemini('parse_start', $model, [
-            'timestamp' => self::timestamp(),
+        self::log_gemini('raw_response_ready_for_inspection', $model, [
             'raw_response_bytes' => strlen($result['raw_body']),
-            'stage' => 'response_parsing',
+            'text_response_bytes' => strlen($result['text']),
+            'extracted_json_bytes' => strlen($extractedJson),
+            'raw_response_file' => $savedRaw['path'],
+            'stage' => 'raw_response_inspection',
         ]);
-        $parseStart = microtime(true);
-        $decoded = self::decode_json_text($result['text']);
-        $parseDuration = self::elapsed_ms($parseStart);
-        $result['debug']['parse_duration_ms'] = $parseDuration;
-        $result['debug']['parse_success'] = is_array($decoded) ? 'yes' : 'no';
-        self::log_gemini('parse_end', $model, [
-            'timestamp' => self::timestamp(),
-            'duration_ms' => $parseDuration,
-            'success' => is_array($decoded) ? 'yes' : 'no',
-            'stage' => 'response_parsing',
-        ]);
-
-        if (!is_array($decoded)) {
-            return new \WP_REST_Response([
-                'error' => 'Gemini responded, but the plugin could not parse valid Elementor JSON. Run “Test Gemini Only” to confirm basic Gemini speed, then simplify the screenshot or switch models.',
-                'debug' => array_merge($result['debug'], ['failure_stage' => 'response_parsing']),
-            ], 422);
-        }
-
-        self::log_gemini('normalization_start', $model, [
-            'timestamp' => self::timestamp(),
-            'stage' => 'elementor_json_normalization',
-        ]);
-        $normalizationStart = microtime(true);
-        $validated = self::validate_elementor_template($decoded);
-        $normalizationDuration = self::elapsed_ms($normalizationStart);
-        $result['debug']['normalization_duration_ms'] = $normalizationDuration;
-        $result['debug']['normalization_success'] = is_wp_error($validated) ? 'no' : 'yes';
-        self::log_gemini('normalization_end', $model, [
-            'timestamp' => self::timestamp(),
-            'duration_ms' => $normalizationDuration,
-            'success' => is_wp_error($validated) ? 'no' : 'yes',
-            'stage' => 'elementor_json_normalization',
-        ]);
-
-        if (is_wp_error($validated)) {
-            return new \WP_REST_Response([
-                'error' => $validated->get_error_message(),
-                'debug' => array_merge($result['debug'], ['failure_stage' => 'elementor_json_normalization']),
-            ], 422);
-        }
 
         return new \WP_REST_Response([
             'similarityScore' => null,
-            'elementorJson' => $validated,
+            'elementorJson' => null,
             'previewImage' => $imageBase64,
-            'mode' => 'gemini-direct',
+            'mode' => 'gemini-raw-inspection',
             'model' => $model,
             'debug' => $result['debug'],
-            'message' => 'Template generated directly with Gemini. No AI Server URL was used.',
+            'rawGeminiResponse' => $result['raw_body'],
+            'geminiText' => $result['text'],
+            'extractedJsonText' => $extractedJson,
+            'rawResponseFile' => $savedRaw,
+            'message' => 'Gemini response received. Raw response is shown below and saved for inspection. No parsing, normalization, or import was attempted.',
         ], 200);
     }
 
@@ -462,6 +440,50 @@ class API {
 
     private static function elapsed_ms(float $start): int {
         return (int)round((microtime(true) - $start) * 1000);
+    }
+
+    private static function extract_json_text(string $text): string {
+        $clean = trim($text);
+
+        if (preg_match('/```(?:json)?\s*(.*?)```/is', $clean, $matches)) {
+            $clean = trim($matches[1]);
+        } else {
+            $clean = preg_replace('/^```(?:json)?\s*/i', '', $clean);
+            $clean = preg_replace('/\s*```$/', '', $clean);
+            $firstBrace = strpos($clean, '{');
+            $lastBrace = strrpos($clean, '}');
+            if ($firstBrace !== false && $lastBrace !== false && $lastBrace > $firstBrace) {
+                $clean = substr($clean, $firstBrace, $lastBrace - $firstBrace + 1);
+            }
+        }
+
+        return trim($clean);
+    }
+
+    private static function save_raw_gemini_response(string $rawBody, string $model) {
+        $uploads = wp_upload_dir();
+        if (!empty($uploads['error'])) {
+            return new \WP_Error('evai_upload_dir_error', $uploads['error']);
+        }
+
+        $dir = trailingslashit($uploads['basedir']) . 'elementor-vision-ai/raw-responses';
+        if (!wp_mkdir_p($dir)) {
+            return new \WP_Error('evai_raw_response_dir_error', 'Could not create raw response directory.');
+        }
+
+        $safeModel = sanitize_file_name($model);
+        $filename = sprintf('gemini-response-%s-%s.json', gmdate('Ymd-His'), $safeModel);
+        $path = trailingslashit($dir) . $filename;
+        $bytes = file_put_contents($path, $rawBody);
+        if ($bytes === false) {
+            return new \WP_Error('evai_raw_response_write_error', 'Could not write raw Gemini response file.');
+        }
+
+        return [
+            'path' => $path,
+            'url' => trailingslashit($uploads['baseurl']) . 'elementor-vision-ai/raw-responses/' . $filename,
+            'bytes' => $bytes,
+        ];
     }
 
     private static function decode_json_text(string $text): ?array {

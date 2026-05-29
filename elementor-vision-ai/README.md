@@ -67,3 +67,14 @@ Describe this screenshot in 5 bullet points.
 If the test is fast but **Generate Template** times out, the issue is likely the Elementor JSON generation prompt or JSON processing pipeline. Debug details are written to the WordPress PHP error log, including model, timestamps, image size, prompt length, exact prompt, raw response, and the processing stage reached.
 
 The plugin now also returns debug details in the admin screen when generation fails, including the last reached stage and response sizes. The Elementor JSON prompt is intentionally compact and capped to reduce overly large Gemini responses while debugging.
+
+## Raw Gemini response inspection mode
+While debugging the first valid Elementor JSON response, **Generate Template** now stops after Gemini responds.
+
+It does not parse, normalize, or import the template. Instead it shows:
+
+- complete raw Gemini response
+- extracted JSON text with markdown fences removed when present
+- saved raw response file link
+
+Use **View Raw Gemini Response** to inspect exactly what Gemini returned before any plugin processing.
