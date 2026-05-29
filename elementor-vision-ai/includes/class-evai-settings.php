@@ -19,7 +19,7 @@ class Settings {
             'sanitize_callback' => [self::class, 'sanitize'],
             'default' => [
                 'gemini_api_key' => '',
-                'orchestrator_url' => 'https://your-managed-worker.example.com',
+                'orchestrator_url' => '',
                 'ai_backend' => 'gemini',
             ],
         ]);

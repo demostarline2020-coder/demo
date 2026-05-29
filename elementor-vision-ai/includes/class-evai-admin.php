@@ -42,7 +42,7 @@ class Admin {
         ?>
         <div class="wrap evai-settings-wrap">
             <h1>Elementor Vision AI Settings</h1>
-            <p class="evai-intro">Quick setup takes about 2 minutes.</p>
+            <p class="evai-intro">Quick setup takes about 2 minutes. Most users only need a Gemini API key.</p>
 
             <form method="post" action="options.php" id="evai-settings-form">
                 <?php settings_fields('evai_settings_group'); ?>
@@ -55,7 +55,7 @@ class Admin {
                             <option value="gemini" <?php selected($backend, 'gemini'); ?>>Gemini Vision (Recommended)</option>
                             <option value="ollama" <?php selected($backend, 'ollama'); ?>>Ollama (Advanced / Local)</option>
                         </select>
-                        <p class="description">Gemini is easiest. Ollama is for advanced users with their own server.</p>
+                        <p class="description">Gemini is easiest and does not need an AI Server URL. Ollama is for advanced users with their own server.</p>
                     </div>
                 </div>
 
