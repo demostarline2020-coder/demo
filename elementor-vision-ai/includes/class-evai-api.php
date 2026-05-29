@@ -93,12 +93,13 @@ class API {
             return new \WP_REST_Response(['error' => 'Gemini API key is required. Add it in Elementor Vision AI → Settings.'], 400);
         }
 
-        $model = self::selected_gemini_model();
+        $primaryModel = self::selected_gemini_model();
         $prompt = 'Describe this screenshot in 5 bullet points.';
-        $result = self::call_gemini($apiKey, $model, $prompt, $upload['image_base64'], $upload['mime_type'], $upload['image_size'], false, 'plain_test');
+        $result = self::call_gemini_with_retries($apiKey, $primaryModel, $prompt, $upload['image_base64'], $upload['mime_type'], $upload['image_size'], false, 'plain_test');
         if (is_wp_error($result)) {
             return self::gemini_error_response($result, 502);
         }
+        $model = $result['model'];
 
         return new \WP_REST_Response([
             'mode' => 'gemini-test',
@@ -115,12 +116,13 @@ class API {
             return new \WP_REST_Response(['error' => 'Gemini API key is required. Add it in Elementor Vision AI → Settings.'], 400);
         }
 
-        $model = self::selected_gemini_model();
+        $primaryModel = self::selected_gemini_model();
         $prompt = self::elementor_template_prompt();
-        $result = self::call_gemini($apiKey, $model, $prompt, $imageBase64, $mimeType, $imageSize, true, 'template_generation');
+        $result = self::call_gemini_with_retries($apiKey, $primaryModel, $prompt, $imageBase64, $mimeType, $imageSize, true, 'template_generation');
         if (is_wp_error($result)) {
             return self::gemini_error_response($result, 502);
         }
+        $model = $result['model'];
 
         self::log_gemini('parse_start', $model, [
             'timestamp' => self::timestamp(),
@@ -216,7 +218,98 @@ class API {
         return new \WP_REST_Response($body, wp_remote_retrieve_response_code($response));
     }
 
-    private static function call_gemini(string $apiKey, string $model, string $prompt, string $imageBase64, string $mimeType, int $imageSize, bool $expectJson, string $mode) {
+    private static function call_gemini_with_retries(string $apiKey, string $primaryModel, string $prompt, string $imageBase64, string $mimeType, int $imageSize, bool $expectJson, string $mode) {
+        $models = array_values(array_unique([$primaryModel, 'gemini-1.5-flash']));
+        $backoffs = [2, 5, 10];
+        $lastError = null;
+
+        foreach ($models as $modelIndex => $model) {
+            for ($attempt = 0; $attempt <= count($backoffs); $attempt++) {
+                self::log_gemini('attempt_start', $model, [
+                    'mode' => $mode,
+                    'model_index' => $modelIndex,
+                    'attempt' => $attempt + 1,
+                    'retry_count' => $attempt,
+                    'primary_model' => $primaryModel,
+                ]);
+
+                $result = self::call_gemini($apiKey, $model, $prompt, $imageBase64, $mimeType, $imageSize, $expectJson, $mode, $attempt);
+                if (!is_wp_error($result)) {
+                    $result['model'] = $model;
+                    $result['debug']['final_model'] = $model;
+                    $result['debug']['retry_count'] = $attempt;
+                    $result['debug']['fallback_used'] = $model !== $primaryModel ? 'yes' : 'no';
+                    self::log_gemini('final_model_selected', $model, [
+                        'mode' => $mode,
+                        'final_model' => $model,
+                        'retry_count' => $attempt,
+                        'fallback_used' => $model !== $primaryModel ? 'yes' : 'no',
+                    ]);
+                    return $result;
+                }
+
+                $lastError = $result;
+                if (!self::is_retryable_gemini_error($result)) {
+                    self::log_gemini('non_retryable_failure', $model, [
+                        'mode' => $mode,
+                        'final_model' => $model,
+                        'retry_count' => $attempt,
+                        'error' => $result->get_error_message(),
+                    ]);
+                    return $result;
+                }
+
+                if ($attempt < count($backoffs)) {
+                    $delay = $backoffs[$attempt];
+                    self::log_gemini('retry_scheduled', $model, [
+                        'mode' => $mode,
+                        'retry_count' => $attempt + 1,
+                        'delay_seconds' => $delay,
+                        'error' => $result->get_error_message(),
+                    ]);
+                    sleep($delay);
+                }
+            }
+
+            if ($model !== 'gemini-1.5-flash') {
+                self::log_gemini('model_fallback', 'gemini-1.5-flash', [
+                    'mode' => $mode,
+                    'from_model' => $model,
+                    'to_model' => 'gemini-1.5-flash',
+                    'reason' => $lastError ? $lastError->get_error_message() : 'retryable Gemini failure',
+                ]);
+            }
+        }
+
+        if ($lastError instanceof \WP_Error) {
+            $data = $lastError->get_error_data();
+            self::log_gemini('final_model_failed', 'gemini-1.5-flash', [
+                'mode' => $mode,
+                'final_model' => 'gemini-1.5-flash',
+                'error' => $lastError->get_error_message(),
+            ]);
+            if (is_array($data)) {
+                $data['final_model'] = $data['model'] ?? 'gemini-1.5-flash';
+                $data['all_retries_failed'] = 'yes';
+                return new \WP_Error($lastError->get_error_code(), $lastError->get_error_message(), $data);
+            }
+            return $lastError;
+        }
+
+        return new \WP_Error('evai_gemini_retry_failed', 'Gemini is temporarily unavailable. Please try again in a few minutes or switch Gemini models in Elementor Vision AI → Settings.');
+    }
+
+    private static function is_retryable_gemini_error(\WP_Error $error): bool {
+        $data = $error->get_error_data();
+        if (!is_array($data)) {
+            return false;
+        }
+
+        $status = (int)($data['http_status'] ?? 0);
+        return in_array($status, [429, 500, 502, 503, 504], true) || ($data['stage'] ?? '') === 'before_gemini_response';
+    }
+
+    private static function call_gemini(string $apiKey, string $model, string $prompt, string $imageBase64, string $mimeType, int $imageSize, bool $expectJson, string $mode, int $retryCount = 0) {
         $promptLength = strlen($prompt);
         $start = microtime(true);
         $debug = [
@@ -226,6 +319,7 @@ class API {
             'image_size_bytes' => $imageSize,
             'prompt_length' => $promptLength,
             'timeout_seconds' => 180,
+            'retry_count' => $retryCount,
         ];
 
         self::log_gemini('request_start', $model, $debug);
@@ -283,6 +377,12 @@ class API {
         if ($status < 200 || $status >= 300) {
             $statusName = is_array($body) ? ($body['error']['status'] ?? '') : '';
             $message = is_array($body) ? ($body['error']['message'] ?? 'Google Gemini returned an error.') : 'Google Gemini returned an error.';
+            if ($status === 503) {
+                $message = sprintf(
+                    'Google Gemini is temporarily overloaded or unavailable for model %s. The plugin retried automatically and may switch to gemini-1.5-flash. Please try again in a few minutes if this continues.',
+                    $model
+                );
+            }
             if ($statusName === 'RESOURCE_EXHAUSTED') {
                 $message = sprintf(
                     'Google Gemini says this model has reached its usage limit. Current model: %s. Please wait and try again, or switch to another Gemini model in Elementor Vision AI → Settings.',
@@ -307,6 +407,7 @@ class API {
         $debug['text_response_bytes'] = strlen($text);
         self::log_gemini('request_success', $model, $debug);
         return [
+            'model' => $model,
             'text' => $text,
             'raw_body' => $rawBody,
             'debug' => $debug,
