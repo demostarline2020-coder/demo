@@ -6,10 +6,11 @@ Most WordPress users only need a Google Gemini API key.
 1. Install and activate the plugin.
 2. Open **Elementor Vision AI → Settings**.
 3. Choose **Gemini Vision (Recommended)**.
-4. Open Google AI Studio: `https://aistudio.google.com/app/apikey`.
-5. Sign in, click **Create API Key**, copy the key, and paste it into the plugin.
-6. Save settings.
-7. Upload a screenshot and click **Generate Template**.
+4. Leave **gemini-2.5-flash (recommended)** selected unless you need another Gemini model.
+5. Open Google AI Studio: `https://aistudio.google.com/app/apikey`.
+6. Sign in, click **Create API Key**, copy the key, and paste it into the plugin.
+7. Save settings.
+8. Upload a screenshot and click **Generate Template**.
 
 No AI Server URL, Node.js, managed worker, or server setup is required for Gemini mode.
 
@@ -39,6 +40,8 @@ https://ai.youragency.com
 ### Gemini
 - Easiest setup
 - Only requires Google API key
+- Default model: gemini-2.5-flash
+- Optional models: gemini-2.5-pro or gemini-1.5-flash
 - No server needed
 - Recommended for most users
 

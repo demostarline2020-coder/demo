@@ -7,8 +7,6 @@ if (!defined('ABSPATH')) {
 }
 
 class API {
-    private const GEMINI_MODEL = 'gemini-2.0-flash';
-
     public static function register(): void {
         add_action('rest_api_init', [self::class, 'routes']);
     }
@@ -40,6 +38,7 @@ class API {
                 'ok' => true,
                 'message' => 'Gemini is ready. No AI Server URL is required.',
                 'mode' => 'gemini',
+                'model' => self::selected_gemini_model(),
             ], 200);
         }
 
@@ -86,10 +85,14 @@ class API {
             return new \WP_REST_Response(['error' => 'Gemini API key is required. Add it in Elementor Vision AI → Settings.'], 400);
         }
 
-        $template = self::call_gemini_for_template($apiKey, $imageBase64, $mimeType);
+        $model = self::selected_gemini_model();
+        self::log_gemini('request_start', $model);
+        $template = self::call_gemini_for_template($apiKey, $model, $imageBase64, $mimeType);
         if (is_wp_error($template)) {
+            self::log_gemini('request_failure', $model, $template->get_error_message());
             return new \WP_REST_Response(['error' => $template->get_error_message()], 502);
         }
+        self::log_gemini('request_success', $model);
 
         $validated = self::validate_elementor_template($template);
         if (is_wp_error($validated)) {
@@ -101,6 +104,7 @@ class API {
             'elementorJson' => $validated,
             'previewImage' => $imageBase64,
             'mode' => 'gemini-direct',
+            'model' => $model,
             'message' => 'Template generated directly with Gemini. No AI Server URL was used.',
         ], 200);
     }
@@ -141,7 +145,19 @@ class API {
         return new \WP_REST_Response($body, wp_remote_retrieve_response_code($response));
     }
 
-    private static function call_gemini_for_template(string $apiKey, string $imageBase64, string $mimeType) {
+    private static function selected_gemini_model(): string {
+        return Settings::sanitize_gemini_model(Settings::get('gemini_model', 'gemini-2.5-flash'));
+    }
+
+    private static function log_gemini(string $event, string $model, string $message = ''): void {
+        $log = sprintf('[Elementor Vision AI] Gemini %s | model=%s', $event, $model);
+        if ($message !== '') {
+            $log .= ' | message=' . $message;
+        }
+        error_log($log);
+    }
+
+    private static function call_gemini_for_template(string $apiKey, string $model, string $imageBase64, string $mimeType) {
         $prompt = 'Analyze this website screenshot and return ONLY valid JSON for an importable Elementor page template. Use Elementor flexbox containers, not old sections/columns. Root object must have: version, title, type, content. content must be an array of Elementor container/widget elements. Use editable widgets: heading, text-editor, button, image, icon-box, spacer. Include responsive settings where helpful. Do not wrap response in markdown.';
         $payload = [
             'contents' => [[
@@ -160,7 +176,7 @@ class API {
         ];
 
         $response = wp_remote_post(
-            'https://generativelanguage.googleapis.com/v1beta/models/' . self::GEMINI_MODEL . ':generateContent?key=' . rawurlencode($apiKey),
+            'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($model) . ':generateContent?key=' . rawurlencode($apiKey),
             [
                 'headers' => ['Content-Type' => 'application/json'],
                 'body' => wp_json_encode($payload),
@@ -175,7 +191,14 @@ class API {
         $status = wp_remote_retrieve_response_code($response);
         $body = json_decode(wp_remote_retrieve_body($response), true);
         if ($status < 200 || $status >= 300) {
+            $statusName = $body['error']['status'] ?? '';
             $message = $body['error']['message'] ?? 'Google Gemini returned an error.';
+            if ($statusName === 'RESOURCE_EXHAUSTED') {
+                $message = sprintf(
+                    'Google Gemini says this model has reached its usage limit. Current model: %s. Please wait and try again, or switch to another Gemini model in Elementor Vision AI → Settings.',
+                    $model
+                );
+            }
             return new \WP_Error('evai_gemini_error', $message);
         }
 

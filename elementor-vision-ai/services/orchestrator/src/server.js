@@ -14,14 +14,24 @@ const PRESETS = {
   'modern-footer': { background: '#0f172a', padding: { top: 56, right: 40, bottom: 56, left: 40 } }
 };
 
-const geminiCall = async (apiKey, imageBase64, mimeType) => {
+const geminiCall = async (apiKey, imageBase64, mimeType, model = process.env.GEMINI_MODEL || 'gemini-2.5-flash') => {
   const body = {
     contents: [{ parts: [{ text: 'Analyze this webpage screenshot and return strict JSON with sections, hierarchy, typography, spacing, colors, widgets, responsive hints.' }, { inlineData: { data: imageBase64, mimeType } }] }],
     generationConfig: { responseMimeType: 'application/json' }
   };
-  const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!resp.ok) throw new Error(`Gemini failed: ${resp.status}`);
+  console.log(`[Elementor Vision AI] Gemini request_start | model=${model}`);
+  const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const json = await resp.json();
+  if (!resp.ok) {
+    const status = json?.error?.status || '';
+    let message = json?.error?.message || `Gemini failed: ${resp.status}`;
+    if (status === 'RESOURCE_EXHAUSTED') {
+      message = `Google Gemini says this model has reached its usage limit. Current model: ${model}. Please wait and try again, or switch to another Gemini model.`;
+    }
+    console.error(`[Elementor Vision AI] Gemini request_failure | model=${model} | status=${resp.status} | message=${message}`);
+    throw new Error(message);
+  }
+  console.log(`[Elementor Vision AI] Gemini request_success | model=${model}`);
   return JSON.parse(json.candidates?.[0]?.content?.parts?.[0]?.text || '{}');
 };
 
@@ -97,7 +107,7 @@ app.get('/health', (req, res) => {
 
 app.post('/generate-template', async (req, res) => {
   try {
-    const { imageBase64, mimeType, geminiApiKey, aiBackend } = req.body;
+    const { imageBase64, mimeType, geminiApiKey, aiBackend, geminiModel } = req.body;
     if (!imageBase64) return res.status(400).json({ error: 'Missing image' });
 
     let analysis;
@@ -105,7 +115,7 @@ app.post('/generate-template', async (req, res) => {
       analysis = await ollamaCall(imageBase64, mimeType || 'image/png');
     } else {
       if (!geminiApiKey) return res.status(400).json({ error: 'Missing Gemini API key' });
-      analysis = await geminiCall(geminiApiKey, imageBase64, mimeType || 'image/png');
+      analysis = await geminiCall(geminiApiKey, imageBase64, mimeType || 'image/png', geminiModel);
     }
     analysis.presets = Object.keys(PRESETS).filter(p => JSON.stringify(analysis).toLowerCase().includes(p.split('-')[0]));
 

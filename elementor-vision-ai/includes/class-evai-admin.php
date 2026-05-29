@@ -70,6 +70,15 @@ class Admin {
                     </ol>
                     <p><strong>No coding or server setup required.</strong></p>
                     <div class="evai-field-group">
+                        <label for="evai-gemini-model"><strong>Gemini Model</strong></label>
+                        <select id="evai-gemini-model" name="<?php echo esc_attr(Settings::OPTION_KEY); ?>[gemini_model]">
+                            <?php foreach (Settings::allowed_gemini_models() as $modelValue => $modelLabel) : ?>
+                                <option value="<?php echo esc_attr($modelValue); ?>" <?php selected(Settings::get('gemini_model', 'gemini-2.5-flash'), $modelValue); ?>><?php echo esc_html($modelLabel); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <p class="description">Use gemini-2.5-flash for most screenshots. Switch models if Google says you reached a limit.</p>
+                    </div>
+                    <div class="evai-field-group">
                         <label for="evai-gemini-key"><strong>Gemini API Key</strong></label>
                         <input id="evai-gemini-key" type="password" name="<?php echo esc_attr(Settings::OPTION_KEY); ?>[gemini_api_key]" value="<?php echo esc_attr(Settings::get('gemini_api_key')); ?>" class="regular-text" />
                     </div>
