@@ -18,6 +18,12 @@ class API {
             'callback' => [self::class, 'generate'],
         ]);
 
+        register_rest_route('evai/v1', '/generate-minimal', [
+            'methods' => 'POST',
+            'permission_callback' => fn() => current_user_can('manage_options'),
+            'callback' => [self::class, 'generate_minimal'],
+        ]);
+
         register_rest_route('evai/v1', '/gemini-test', [
             'methods' => 'POST',
             'permission_callback' => fn() => current_user_can('manage_options'),
@@ -82,6 +88,15 @@ class API {
         return self::generate_with_worker($upload['image_base64'], $upload['mime_type'], $upload['filename']);
     }
 
+    public static function generate_minimal(\WP_REST_Request $request): \WP_REST_Response {
+        $upload = self::extract_upload($request);
+        if (is_wp_error($upload)) {
+            return new \WP_REST_Response(['error' => $upload->get_error_message()], 400);
+        }
+
+        return self::generate_with_gemini($upload['image_base64'], $upload['mime_type'], $upload['image_size'], true);
+    }
+
     public static function gemini_test(\WP_REST_Request $request): \WP_REST_Response {
         $upload = self::extract_upload($request);
         if (is_wp_error($upload)) {
@@ -110,14 +125,14 @@ class API {
         ], 200);
     }
 
-    private static function generate_with_gemini(string $imageBase64, string $mimeType, int $imageSize): \WP_REST_Response {
+    private static function generate_with_gemini(string $imageBase64, string $mimeType, int $imageSize, bool $minimal = false): \WP_REST_Response {
         $apiKey = Settings::get('gemini_api_key');
         if ($apiKey === '') {
             return new \WP_REST_Response(['error' => 'Gemini API key is required. Add it in Elementor Vision AI → Settings.'], 400);
         }
 
         $primaryModel = self::selected_gemini_model();
-        $prompt = self::elementor_template_prompt();
+        $prompt = $minimal ? self::minimal_elementor_template_prompt() : self::elementor_template_prompt();
         $result = self::call_gemini_with_retries($apiKey, $primaryModel, $prompt, $imageBase64, $mimeType, $imageSize, true, 'template_generation');
         if (is_wp_error($result)) {
             return self::gemini_error_response($result, 502);
@@ -137,27 +152,37 @@ class API {
             ];
         }
 
+        $finishReason = $result['debug']['finish_reason'] ?? '';
+        $isTruncated = $finishReason === 'MAX_TOKENS';
         self::log_gemini('raw_response_ready_for_inspection', $model, [
             'raw_response_bytes' => strlen($result['raw_body']),
             'text_response_bytes' => strlen($result['text']),
             'extracted_json_bytes' => strlen($extractedJson),
             'raw_response_file' => $savedRaw['path'],
+            'finish_reason' => $finishReason,
+            'total_output_tokens' => $result['debug']['output_tokens'] ?? null,
             'stage' => 'raw_response_inspection',
         ]);
 
-        return new \WP_REST_Response([
+        $payload = [
             'similarityScore' => null,
             'elementorJson' => null,
             'previewImage' => $imageBase64,
-            'mode' => 'gemini-raw-inspection',
+            'mode' => $minimal ? 'gemini-minimal-raw-inspection' : 'gemini-raw-inspection',
             'model' => $model,
             'debug' => $result['debug'],
             'rawGeminiResponse' => $result['raw_body'],
             'geminiText' => $result['text'],
             'extractedJsonText' => $extractedJson,
             'rawResponseFile' => $savedRaw,
-            'message' => 'Gemini response received. Raw response is shown below and saved for inspection. No parsing, normalization, or import was attempted.',
-        ], 200);
+            'finishReason' => $finishReason,
+            'isTruncated' => $isTruncated,
+            'message' => $isTruncated
+                ? 'Gemini response was truncated. Raw response is shown below and saved for inspection. Try the smallest JSON debug mode or switch models.'
+                : 'Gemini response received without MAX_TOKENS truncation. Raw response is shown below and saved for inspection. No parsing, normalization, or import was attempted.',
+        ];
+
+        return new \WP_REST_Response($payload, $isTruncated ? 422 : 200);
     }
 
     private static function generate_with_worker(string $imageBase64, string $mimeType, string $filename): \WP_REST_Response {
@@ -297,6 +322,7 @@ class API {
             'image_size_bytes' => $imageSize,
             'prompt_length' => $promptLength,
             'timeout_seconds' => 180,
+            'max_output_tokens' => self::gemini_max_output_tokens($expectJson),
             'retry_count' => $retryCount,
         ];
 
@@ -315,7 +341,7 @@ class API {
             ]],
             'generationConfig' => [
                 'temperature' => $expectJson ? 0.2 : 0.1,
-                'maxOutputTokens' => $expectJson ? 8192 : 1024,
+                'maxOutputTokens' => self::gemini_max_output_tokens($expectJson),
             ],
         ];
 
@@ -352,6 +378,16 @@ class API {
         self::log_gemini('request_response_received', $model, $debug);
 
         $body = json_decode($rawBody, true);
+        if (is_array($body)) {
+            $debug['finish_reason'] = $body['candidates'][0]['finishReason'] ?? '';
+            $debug['output_tokens'] = $body['usageMetadata']['candidatesTokenCount'] ?? null;
+            $debug['total_tokens'] = $body['usageMetadata']['totalTokenCount'] ?? null;
+            self::log_gemini('response_finish_metadata', $model, [
+                'finish_reason' => $debug['finish_reason'],
+                'total_output_tokens' => $debug['output_tokens'],
+                'total_tokens' => $debug['total_tokens'],
+            ]);
+        }
         if ($status < 200 || $status >= 300) {
             $statusName = is_array($body) ? ($body['error']['status'] ?? '') : '';
             $message = is_array($body) ? ($body['error']['message'] ?? 'Google Gemini returned an error.') : 'Google Gemini returned an error.';
@@ -401,8 +437,16 @@ class API {
         return new \WP_REST_Response($payload, $status);
     }
 
+    private static function gemini_max_output_tokens(bool $expectJson): int {
+        return $expectJson ? 32768 : 1024;
+    }
+
+    private static function minimal_elementor_template_prompt(): string {
+        return 'Return the smallest possible valid Elementor JSON for this screenshot. Output ONLY JSON. Required root: {"version":"0.4","title":"Elementor Vision AI Template","type":"page","content":[]}. Use max 3 containers and max 8 widgets. Essential structure only: section containers, nested containers only if needed, heading/text/button widgets only. No placeholder image URLs. No verbose styling. No explanations. No markdown.';
+    }
+
     private static function elementor_template_prompt(): string {
-        return 'Return compact Elementor JSON for this screenshot. Output ONLY JSON. Schema: {"version":"0.4","title":"Elementor Vision AI Template","type":"page","content":[elements]}. Use flexbox container elements and widgets only. Max 6 top-level containers and max 24 widgets total. Use concise settings only: colors, typography sizes, padding, margin, flex_direction, background. Widgets allowed: heading, text-editor, button, image, icon-box, spacer. Use placeholder image URLs instead of embedding images. Avoid exhaustive responsive settings; include only key tablet/mobile flex_direction or font sizes when obvious.';
+        return 'Return minimal valid Elementor JSON for this screenshot. Output ONLY JSON. Root: {"version":"0.4","title":"Elementor Vision AI Template","type":"page","content":[elements]}. Build essential structure only: sections, containers, widgets. Max 5 containers and max 16 widgets. Widgets: heading, text-editor, button, spacer only. Use only essential content text and very small settings objects. No image URLs. No verbose styling. No explanations. No markdown.';
     }
 
     private static function extract_upload(\WP_REST_Request $request) {

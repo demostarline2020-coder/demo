@@ -45,7 +45,10 @@
       });
       const data = await res.json();
       if (!res.ok) {
-        setStatus(data.error || 'Request failed.');
+        setStatus(data.message || data.error || 'Request failed.');
+        if (data.rawGeminiResponse) {
+          setResult(data);
+        }
         setTestText(data.debug ? `Debug info:\n${JSON.stringify(data.debug, null, 2)}` : '');
         setLoading(false);
         return;
@@ -74,6 +77,7 @@
       wp.element.createElement('input', { type: 'file', accept: 'image/*', onChange: (e) => setFile(e.target.files[0]), className: 'evai-input' }),
       wp.element.createElement('div', { className: 'evai-actions' }, [
         wp.element.createElement('button', { className: 'button button-primary', disabled: !file || loading || !health.ok, onClick: () => postImage('generate', 'Requesting raw Gemini response...') }, loading ? 'Working...' : 'Generate Template'),
+        wp.element.createElement('button', { className: 'button', disabled: !file || loading || !health.ok, onClick: () => postImage('generate-minimal', 'Requesting smallest possible Elementor JSON...') }, 'Generate Minimal JSON'),
         wp.element.createElement('button', { className: 'button', disabled: !file || loading || !health.ok, onClick: () => postImage('gemini-test', 'Running quick Gemini test...') }, 'Test Gemini Only'),
         result?.rawGeminiResponse ? wp.element.createElement('button', { className: 'button', disabled: loading, onClick: () => setShowRaw(!showRaw) }, showRaw ? 'Hide Raw Gemini Response' : 'View Raw Gemini Response') : null,
       ]),

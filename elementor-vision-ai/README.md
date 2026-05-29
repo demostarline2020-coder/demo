@@ -78,3 +78,15 @@ It does not parse, normalize, or import the template. Instead it shows:
 - saved raw response file link
 
 Use **View Raw Gemini Response** to inspect exactly what Gemini returned before any plugin processing.
+
+## MAX_TOKENS truncation handling
+If Gemini returns `finishReason = MAX_TOKENS`, the response was cut off before the Elementor JSON finished.
+
+The plugin now:
+- increases template generation output allowance to 32,768 tokens
+- logs `finishReason`, output tokens, and total tokens
+- shows the explicit message: `Gemini response was truncated.`
+- keeps raw response inspection mode active
+- provides **Generate Minimal JSON** to request the smallest possible valid Elementor structure first
+
+Use **Generate Minimal JSON** to check whether Gemini can return a complete Elementor JSON response without truncation before expanding the prompt again.
