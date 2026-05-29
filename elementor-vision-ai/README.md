@@ -65,3 +65,5 @@ Describe this screenshot in 5 bullet points.
 ```
 
 If the test is fast but **Generate Template** times out, the issue is likely the Elementor JSON generation prompt or JSON processing pipeline. Debug details are written to the WordPress PHP error log, including model, timestamps, image size, prompt length, exact prompt, raw response, and the processing stage reached.
+
+The plugin now also returns debug details in the admin screen when generation fails, including the last reached stage and response sizes. The Elementor JSON prompt is intentionally compact and capped to reduce overly large Gemini responses while debugging.

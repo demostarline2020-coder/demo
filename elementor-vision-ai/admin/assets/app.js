@@ -44,6 +44,7 @@
       const data = await res.json();
       if (!res.ok) {
         setStatus(data.error || 'Request failed.');
+        setTestText(data.debug ? `Debug info:\n${JSON.stringify(data.debug, null, 2)}` : '');
         setLoading(false);
         return;
       }
@@ -53,6 +54,7 @@
         setStatus(data.message || 'Gemini test completed.');
       } else {
         setResult(data);
+        setTestText(data.debug ? `Debug info:\n${JSON.stringify(data.debug, null, 2)}` : '');
         setStatus(data.similarityScore === null || data.similarityScore === undefined ? (data.message || 'Template generated successfully.') : `Similarity score: ${Math.round(data.similarityScore * 100)}%`);
       }
       setLoading(false);

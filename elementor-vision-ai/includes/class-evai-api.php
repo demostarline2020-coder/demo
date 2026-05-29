@@ -97,7 +97,7 @@ class API {
         $prompt = 'Describe this screenshot in 5 bullet points.';
         $result = self::call_gemini($apiKey, $model, $prompt, $upload['image_base64'], $upload['mime_type'], $upload['image_size'], false, 'plain_test');
         if (is_wp_error($result)) {
-            return new \WP_REST_Response(['error' => $result->get_error_message()], 502);
+            return self::gemini_error_response($result, 502);
         }
 
         return new \WP_REST_Response([
@@ -119,7 +119,7 @@ class API {
         $prompt = self::elementor_template_prompt();
         $result = self::call_gemini($apiKey, $model, $prompt, $imageBase64, $mimeType, $imageSize, true, 'template_generation');
         if (is_wp_error($result)) {
-            return new \WP_REST_Response(['error' => $result->get_error_message()], 502);
+            return self::gemini_error_response($result, 502);
         }
 
         self::log_gemini('parse_start', $model, [
@@ -129,15 +129,21 @@ class API {
         ]);
         $parseStart = microtime(true);
         $decoded = self::decode_json_text($result['text']);
+        $parseDuration = self::elapsed_ms($parseStart);
+        $result['debug']['parse_duration_ms'] = $parseDuration;
+        $result['debug']['parse_success'] = is_array($decoded) ? 'yes' : 'no';
         self::log_gemini('parse_end', $model, [
             'timestamp' => self::timestamp(),
-            'duration_ms' => self::elapsed_ms($parseStart),
+            'duration_ms' => $parseDuration,
             'success' => is_array($decoded) ? 'yes' : 'no',
             'stage' => 'response_parsing',
         ]);
 
         if (!is_array($decoded)) {
-            return new \WP_REST_Response(['error' => 'Gemini responded, but the plugin could not parse valid Elementor JSON. Run “Test Gemini Only” to confirm basic Gemini speed, then simplify the screenshot or switch models.'], 422);
+            return new \WP_REST_Response([
+                'error' => 'Gemini responded, but the plugin could not parse valid Elementor JSON. Run “Test Gemini Only” to confirm basic Gemini speed, then simplify the screenshot or switch models.',
+                'debug' => array_merge($result['debug'], ['failure_stage' => 'response_parsing']),
+            ], 422);
         }
 
         self::log_gemini('normalization_start', $model, [
@@ -146,15 +152,21 @@ class API {
         ]);
         $normalizationStart = microtime(true);
         $validated = self::validate_elementor_template($decoded);
+        $normalizationDuration = self::elapsed_ms($normalizationStart);
+        $result['debug']['normalization_duration_ms'] = $normalizationDuration;
+        $result['debug']['normalization_success'] = is_wp_error($validated) ? 'no' : 'yes';
         self::log_gemini('normalization_end', $model, [
             'timestamp' => self::timestamp(),
-            'duration_ms' => self::elapsed_ms($normalizationStart),
+            'duration_ms' => $normalizationDuration,
             'success' => is_wp_error($validated) ? 'no' : 'yes',
             'stage' => 'elementor_json_normalization',
         ]);
 
         if (is_wp_error($validated)) {
-            return new \WP_REST_Response(['error' => $validated->get_error_message()], 422);
+            return new \WP_REST_Response([
+                'error' => $validated->get_error_message(),
+                'debug' => array_merge($result['debug'], ['failure_stage' => 'elementor_json_normalization']),
+            ], 422);
         }
 
         return new \WP_REST_Response([
@@ -231,6 +243,7 @@ class API {
             ]],
             'generationConfig' => [
                 'temperature' => $expectJson ? 0.2 : 0.1,
+                'maxOutputTokens' => $expectJson ? 8192 : 1024,
             ],
         ];
 
@@ -254,7 +267,7 @@ class API {
             $debug['stage'] = 'before_gemini_response';
             $debug['error'] = $response->get_error_message();
             self::log_gemini('request_failure', $model, $debug);
-            return new \WP_Error('evai_gemini_connection_failed', 'Could not contact Google Gemini before a response was received. Details: ' . $response->get_error_message());
+            return new \WP_Error('evai_gemini_connection_failed', 'Could not contact Google Gemini before a response was received. Details: ' . $response->get_error_message(), $debug);
         }
 
         $rawBody = wp_remote_retrieve_body($response);
@@ -277,20 +290,21 @@ class API {
                 );
             }
             self::log_gemini('request_failure', $model, array_merge($debug, ['error' => $message]));
-            return new \WP_Error('evai_gemini_error', $message);
+            return new \WP_Error('evai_gemini_error', $message, array_merge($debug, ['failure_stage' => 'gemini_http_error']));
         }
 
         if (!is_array($body)) {
             self::log_gemini('request_failure', $model, array_merge($debug, ['stage' => 'gemini_response_json_decode', 'error' => 'Raw Gemini response was not valid JSON.']));
-            return new \WP_Error('evai_gemini_invalid_response', 'Gemini responded, but the plugin could not read the response envelope.');
+            return new \WP_Error('evai_gemini_invalid_response', 'Gemini responded, but the plugin could not read the response envelope.', array_merge($debug, ['failure_stage' => 'gemini_response_json_decode']));
         }
 
         $text = $body['candidates'][0]['content']['parts'][0]['text'] ?? '';
         if ($text === '') {
             self::log_gemini('request_failure', $model, array_merge($debug, ['stage' => 'gemini_text_extract', 'error' => 'No text part found in Gemini response.']));
-            return new \WP_Error('evai_gemini_empty_response', 'Gemini responded, but no usable text was returned.');
+            return new \WP_Error('evai_gemini_empty_response', 'Gemini responded, but no usable text was returned.', array_merge($debug, ['failure_stage' => 'gemini_text_extract']));
         }
 
+        $debug['text_response_bytes'] = strlen($text);
         self::log_gemini('request_success', $model, $debug);
         return [
             'text' => $text,
@@ -299,8 +313,17 @@ class API {
         ];
     }
 
+    private static function gemini_error_response(\WP_Error $error, int $status): \WP_REST_Response {
+        $payload = ['error' => $error->get_error_message()];
+        $debug = $error->get_error_data();
+        if (is_array($debug)) {
+            $payload['debug'] = $debug;
+        }
+        return new \WP_REST_Response($payload, $status);
+    }
+
     private static function elementor_template_prompt(): string {
-        return 'Analyze this website screenshot and return ONLY valid JSON for an importable Elementor page template. Use Elementor flexbox containers, not old sections/columns. Root object must have: version, title, type, content. content must be an array of Elementor container/widget elements. Use editable widgets: heading, text-editor, button, image, icon-box, spacer. Include responsive settings where helpful. Do not wrap response in markdown.';
+        return 'Return compact Elementor JSON for this screenshot. Output ONLY JSON. Schema: {"version":"0.4","title":"Elementor Vision AI Template","type":"page","content":[elements]}. Use flexbox container elements and widgets only. Max 6 top-level containers and max 24 widgets total. Use concise settings only: colors, typography sizes, padding, margin, flex_direction, background. Widgets allowed: heading, text-editor, button, image, icon-box, spacer. Use placeholder image URLs instead of embedding images. Avoid exhaustive responsive settings; include only key tablet/mobile flex_direction or font sizes when obvious.';
     }
 
     private static function extract_upload(\WP_REST_Request $request) {
