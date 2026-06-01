@@ -1,0 +1,15 @@
+{
+  "name": "evai-orchestrator",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pixelmatch": "^6.0.0",
+    "playwright": "^1.52.0",
+    "pngjs": "^7.0.0"
+  }
+}
