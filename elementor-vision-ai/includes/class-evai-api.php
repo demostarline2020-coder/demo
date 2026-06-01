@@ -133,7 +133,7 @@ class API {
 
         $primaryModel = self::selected_gemini_model();
         $prompt = $minimal ? self::minimal_elementor_template_prompt() : self::elementor_template_prompt();
-        $result = self::call_gemini_with_retries($apiKey, $primaryModel, $prompt, $imageBase64, $mimeType, $imageSize, true, 'template_generation');
+        $result = self::call_gemini_with_retries($apiKey, $primaryModel, $prompt, $imageBase64, $mimeType, $imageSize, true, 'layout_description');
         if (is_wp_error($result)) {
             return self::gemini_error_response($result, 502);
         }
@@ -142,47 +142,80 @@ class API {
         $extractedJson = self::extract_json_text($result['text']);
         $savedRaw = self::save_raw_gemini_response($result['raw_body'], $model);
         if (is_wp_error($savedRaw)) {
-            self::log_gemini('raw_response_save_failed', $model, [
-                'error' => $savedRaw->get_error_message(),
-            ]);
-            $savedRaw = [
-                'path' => '',
-                'url' => '',
-                'error' => $savedRaw->get_error_message(),
-            ];
+            self::log_gemini('raw_response_save_failed', $model, ['error' => $savedRaw->get_error_message()]);
+            $savedRaw = ['path' => '', 'url' => '', 'error' => $savedRaw->get_error_message()];
         }
 
         $finishReason = $result['debug']['finish_reason'] ?? '';
-        $isTruncated = $finishReason === 'MAX_TOKENS';
-        self::log_gemini('raw_response_ready_for_inspection', $model, [
-            'raw_response_bytes' => strlen($result['raw_body']),
-            'text_response_bytes' => strlen($result['text']),
-            'extracted_json_bytes' => strlen($extractedJson),
-            'raw_response_file' => $savedRaw['path'],
-            'finish_reason' => $finishReason,
-            'total_output_tokens' => $result['debug']['output_tokens'] ?? null,
-            'stage' => 'raw_response_inspection',
-        ]);
+        if ($finishReason === 'MAX_TOKENS') {
+            return new \WP_REST_Response([
+                'error' => 'Gemini response was truncated.',
+                'similarityScore' => null,
+                'elementorJson' => null,
+                'previewImage' => $imageBase64,
+                'mode' => 'layout-description-truncated',
+                'model' => $model,
+                'debug' => $result['debug'],
+                'rawGeminiResponse' => $result['raw_body'],
+                'geminiText' => $result['text'],
+                'extractedJsonText' => $extractedJson,
+                'rawResponseFile' => $savedRaw,
+                'finishReason' => $finishReason,
+                'isTruncated' => true,
+                'message' => 'Gemini response was truncated. The layout description is incomplete, so no Elementor JSON was built.',
+            ], 422);
+        }
 
-        $payload = [
+        $layout = json_decode($extractedJson, true);
+        if (!is_array($layout)) {
+            return new \WP_REST_Response([
+                'error' => 'Gemini returned a layout description, but it was not valid JSON.',
+                'debug' => array_merge($result['debug'], ['failure_stage' => 'layout_description_parse']),
+                'rawGeminiResponse' => $result['raw_body'],
+                'geminiText' => $result['text'],
+                'extractedJsonText' => $extractedJson,
+                'rawResponseFile' => $savedRaw,
+            ], 422);
+        }
+
+        $template = self::build_elementor_template_from_layout($layout);
+        if (is_wp_error($template)) {
+            return new \WP_REST_Response([
+                'error' => $template->get_error_message(),
+                'debug' => array_merge($result['debug'], ['failure_stage' => 'strict_elementor_builder']),
+                'layoutDescription' => $layout,
+                'rawGeminiResponse' => $result['raw_body'],
+                'extractedJsonText' => $extractedJson,
+                'rawResponseFile' => $savedRaw,
+            ], 422);
+        }
+
+        $validation = self::validate_strict_elementor_template($template);
+        if (is_wp_error($validation)) {
+            return new \WP_REST_Response([
+                'error' => $validation->get_error_message(),
+                'debug' => array_merge($result['debug'], ['failure_stage' => 'strict_elementor_validation']),
+                'layoutDescription' => $layout,
+                'elementorJson' => $template,
+            ], 422);
+        }
+
+        return new \WP_REST_Response([
             'similarityScore' => null,
-            'elementorJson' => null,
+            'elementorJson' => $template,
             'previewImage' => $imageBase64,
-            'mode' => $minimal ? 'gemini-minimal-raw-inspection' : 'gemini-raw-inspection',
+            'mode' => $minimal ? 'strict-elementor-minimal' : 'strict-elementor',
             'model' => $model,
             'debug' => $result['debug'],
+            'layoutDescription' => $layout,
             'rawGeminiResponse' => $result['raw_body'],
             'geminiText' => $result['text'],
             'extractedJsonText' => $extractedJson,
             'rawResponseFile' => $savedRaw,
             'finishReason' => $finishReason,
-            'isTruncated' => $isTruncated,
-            'message' => $isTruncated
-                ? 'Gemini response was truncated. Raw response is shown below and saved for inspection. Try the smallest JSON debug mode or switch models.'
-                : 'Gemini response received without MAX_TOKENS truncation. Raw response is shown below and saved for inspection. No parsing, normalization, or import was attempted.',
-        ];
-
-        return new \WP_REST_Response($payload, $isTruncated ? 422 : 200);
+            'isTruncated' => false,
+            'message' => 'Valid Elementor JSON was built by WordPress from Gemini layout description. Gemini did not generate Elementor internals.',
+        ], 200);
     }
 
     private static function generate_with_worker(string $imageBase64, string $mimeType, string $filename): \WP_REST_Response {
@@ -442,11 +475,187 @@ class API {
     }
 
     private static function minimal_elementor_template_prompt(): string {
-        return 'Return the smallest possible valid Elementor JSON for this screenshot. Output ONLY JSON. Required root: {"version":"0.4","title":"Elementor Vision AI Template","type":"page","content":[]}. Use max 3 containers and max 8 widgets. Essential structure only: section containers, nested containers only if needed, heading/text/button widgets only. No placeholder image URLs. No verbose styling. No explanations. No markdown.';
+        return 'Describe this webpage screenshot as compact JSON only. Do not output Elementor JSON. Schema: {"sections":[{"type":"hero|services|stats|cta|footer|content","heading":"","subheading":"","text":"","buttons":[""],"items":[{"title":"","text":""}]}]}. Max 3 sections, max 4 items per section. Essential visible content only. No markdown.';
     }
 
     private static function elementor_template_prompt(): string {
-        return 'Return minimal valid Elementor JSON for this screenshot. Output ONLY JSON. Root: {"version":"0.4","title":"Elementor Vision AI Template","type":"page","content":[elements]}. Build essential structure only: sections, containers, widgets. Max 5 containers and max 16 widgets. Widgets: heading, text-editor, button, spacer only. Use only essential content text and very small settings objects. No image URLs. No verbose styling. No explanations. No markdown.';
+        return 'Describe this webpage screenshot as structured layout JSON only. Do not output Elementor JSON or Elementor settings. WordPress will build Elementor JSON. Schema: {"sections":[{"type":"hero|services|stats|cta|footer|content","heading":"","subheading":"","text":"","buttons":[""],"items":[{"title":"","text":""}]}]}. Max 6 sections, max 6 items per section. Use visible content only. No styling internals. No markdown.';
+    }
+
+    private static function build_elementor_template_from_layout(array $layout) {
+        $sections = $layout['sections'] ?? null;
+        if (!is_array($sections) || $sections === []) {
+            return new \WP_Error('evai_layout_missing_sections', 'Gemini layout description did not include sections.');
+        }
+
+        $content = [];
+        foreach (array_slice($sections, 0, 8) as $section) {
+            if (!is_array($section)) {
+                continue;
+            }
+            $content[] = self::build_section_container($section);
+        }
+
+        if ($content === []) {
+            return new \WP_Error('evai_layout_empty_sections', 'Gemini layout description did not include usable sections.');
+        }
+
+        return [
+            'version' => '0.4',
+            'title' => sanitize_text_field($layout['title'] ?? 'Elementor Vision AI Template'),
+            'type' => 'page',
+            'content' => $content,
+        ];
+    }
+
+    private static function build_section_container(array $section): array {
+        $type = sanitize_key($section['type'] ?? 'content');
+        $elements = [];
+
+        if (!empty($section['heading'])) {
+            $elements[] = self::heading_widget($section['heading'], $type === 'hero' ? 'h1' : 'h2');
+        }
+        if (!empty($section['subheading'])) {
+            $elements[] = self::text_widget($section['subheading']);
+        }
+        if (!empty($section['text'])) {
+            $elements[] = self::text_widget($section['text']);
+        }
+
+        if (!empty($section['buttons']) && is_array($section['buttons'])) {
+            foreach (array_slice($section['buttons'], 0, 2) as $button) {
+                $elements[] = self::button_widget(is_scalar($button) ? strval($button) : 'Learn More');
+            }
+        }
+
+        if (!empty($section['items']) && is_array($section['items'])) {
+            $cards = [];
+            foreach (array_slice($section['items'], 0, 6) as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $cardElements = [];
+                if (!empty($item['title'])) {
+                    $cardElements[] = self::heading_widget($item['title'], 'h3');
+                }
+                if (!empty($item['text'])) {
+                    $cardElements[] = self::text_widget($item['text']);
+                }
+                if ($cardElements !== []) {
+                    $cards[] = self::container($cardElements, true, [
+                        '_column_size' => 33,
+                        'flex_direction' => 'column',
+                    ]);
+                }
+            }
+            if ($cards !== []) {
+                $elements[] = self::container($cards, true, [
+                    '_column_size' => 100,
+                    'flex_direction' => 'row',
+                ]);
+            }
+        }
+
+        if ($elements === []) {
+            $elements[] = self::text_widget('Generated section');
+        }
+
+        return self::container($elements, false, [
+            '_column_size' => 100,
+            'content_width' => 'boxed',
+            'flex_direction' => 'column',
+            'padding' => ['unit' => 'px', 'top' => 60, 'right' => 24, 'bottom' => 60, 'left' => 24],
+        ]);
+    }
+
+    private static function container(array $elements, bool $isInner, array $settings = []): array {
+        return [
+            'id' => self::element_id(),
+            'elType' => 'container',
+            'elementType' => 'container',
+            '_column_size' => (int)($settings['_column_size'] ?? 100),
+            'isInner' => $isInner,
+            'settings' => array_merge(['_column_size' => 100], $settings),
+            'elements' => $elements,
+        ];
+    }
+
+    private static function heading_widget($text, string $tag): array {
+        return self::widget('heading', [
+            '_column_size' => 100,
+            'title' => sanitize_text_field(is_scalar($text) ? strval($text) : ''),
+            'header_size' => $tag,
+        ]);
+    }
+
+    private static function text_widget($text): array {
+        return self::widget('text-editor', [
+            '_column_size' => 100,
+            'editor' => wp_kses_post(is_scalar($text) ? strval($text) : ''),
+        ]);
+    }
+
+    private static function button_widget(string $text): array {
+        return self::widget('button', [
+            '_column_size' => 100,
+            'text' => sanitize_text_field($text),
+            'link' => ['url' => '#'],
+        ]);
+    }
+
+    private static function widget(string $widgetType, array $settings): array {
+        return [
+            'id' => self::element_id(),
+            'elType' => 'widget',
+            'elementType' => 'widget',
+            '_column_size' => (int)($settings['_column_size'] ?? 100),
+            'widgetType' => $widgetType,
+            'settings' => array_merge(['_column_size' => 100], $settings),
+            'elements' => [],
+        ];
+    }
+
+    private static function validate_strict_elementor_template(array $template) {
+        if (($template['type'] ?? '') !== 'page' || empty($template['content']) || !is_array($template['content'])) {
+            return new \WP_Error('evai_invalid_elementor_root', 'Generated Elementor template root is invalid.');
+        }
+
+        foreach ($template['content'] as $element) {
+            $error = self::validate_elementor_element($element);
+            if (is_wp_error($error)) {
+                return $error;
+            }
+        }
+
+        return true;
+    }
+
+    private static function validate_elementor_element($element) {
+        if (!is_array($element)) {
+            return new \WP_Error('evai_invalid_element', 'Elementor element must be an object.');
+        }
+        foreach (['id', 'elType', 'elementType', 'settings', 'elements'] as $key) {
+            if (!array_key_exists($key, $element)) {
+                return new \WP_Error('evai_missing_element_key', sprintf('Elementor element is missing required key: %s', $key));
+            }
+        }
+        if (!array_key_exists('_column_size', $element) || !array_key_exists('_column_size', $element['settings'])) {
+            return new \WP_Error('evai_missing_column_size', 'Elementor element is missing required _column_size key.');
+        }
+        if (($element['elType'] ?? '') === 'widget' && empty($element['widgetType'])) {
+            return new \WP_Error('evai_missing_widget_type', 'Elementor widget is missing widgetType.');
+        }
+        foreach ($element['elements'] as $child) {
+            $error = self::validate_elementor_element($child);
+            if (is_wp_error($error)) {
+                return $error;
+            }
+        }
+        return true;
+    }
+
+    private static function element_id(): string {
+        return substr(strtolower(wp_generate_password(8, false, false)), 0, 8);
     }
 
     private static function extract_upload(\WP_REST_Request $request) {

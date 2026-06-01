@@ -89,6 +89,7 @@
       ]) : null,
       rawResponseBlock,
       testText ? wp.element.createElement('pre', { className: 'evai-test-output' }, testText) : null,
+      result?.elementorJson ? wp.element.createElement('a', { className: 'button button-primary', href: URL.createObjectURL(new Blob([JSON.stringify(result.elementorJson, null, 2)], { type: 'application/json' })), download: 'elementor-template.json' }, 'Download Elementor JSON') : null,
       result?.previewImage ? wp.element.createElement('img', { src: `data:image/png;base64,${result.previewImage}`, className: 'evai-preview' }) : null,
     ]);
   }

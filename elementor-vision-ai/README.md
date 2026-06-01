@@ -90,3 +90,14 @@ The plugin now:
 - provides **Generate Minimal JSON** to request the smallest possible valid Elementor structure first
 
 Use **Generate Minimal JSON** to check whether Gemini can return a complete Elementor JSON response without truncation before expanding the prompt again.
+
+## Strict Elementor builder mode
+Gemini no longer generates Elementor internals directly.
+
+Current flow:
+1. Gemini returns a simple layout description only (`sections`, headings, text, buttons, items).
+2. WordPress converts that description into Elementor JSON using strict predefined containers and widgets.
+3. The generated elements always include required keys such as `_column_size`, `elementType`, `widgetType`, `settings`, and `elements`.
+4. The template is validated before the JSON download is shown.
+
+This prevents Gemini from inventing invalid Elementor settings and fixes invalid container/column configuration warnings.
