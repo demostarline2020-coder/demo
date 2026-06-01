@@ -1,16 +1,18 @@
 # Elementor Vision AI (MVP)
 
+Elementor Vision AI converts a website screenshot into an importable Elementor template JSON.
+
 ## Simple setup for most users: Gemini
 Most WordPress users only need a Google Gemini API key.
 
 1. Install and activate the plugin.
 2. Open **Elementor Vision AI → Settings**.
 3. Choose **Gemini Vision (Recommended) — Powered by Gemini 2.5 Flash**.
-4. The plugin is **Powered by Gemini 2.5 Flash** automatically.
-5. Open Google AI Studio: `https://aistudio.google.com/app/apikey`.
-6. Sign in, click **Create API Key**, copy the key, and paste it into the plugin.
-7. Save settings.
-8. Upload a screenshot and click **Generate Template**.
+4. Open Google AI Studio: `https://aistudio.google.com/app/apikey`.
+5. Sign in, click **Create API Key**, copy the key, and paste it into the plugin.
+6. Save settings.
+7. Upload a screenshot and click **Generate Template**.
+8. Download the generated JSON and import it into Elementor.
 
 No AI Server URL, Node.js, managed worker, or server setup is required for Gemini mode.
 
@@ -49,75 +51,27 @@ https://ai.youragency.com
 - Requires your own server
 - Best for agencies/advanced users
 
-## Architecture
+## Production architecture
 Screenshot → Gemini 2.5 Flash → Design Specification JSON → Elementor Builder Layer → Valid Elementor JSON → Rendered Page
 
-- Gemini mode: WordPress calls Gemini 2.5 Flash directly and generates Elementor JSON inside the plugin.
-- Ollama mode: WordPress calls your AI server because Ollama must run on your own infrastructure.
-- Admin UI: upload screenshot, generate template, preview image, download JSON.
+- Gemini analyzes layout, spacing, typography, colors, alignment, and visual hierarchy.
+- Gemini does **not** generate Elementor internal schema.
+- WordPress converts the design specification into Elementor containers and widgets.
+- The plugin validates the Elementor template before the download button is shown.
 
-## Temporary Gemini debug test
-If template generation times out, use **Test Gemini Only** on the upload screen.
+## Elementor import compatibility
+The exported JSON follows Elementor template structure:
 
-This sends the uploaded screenshot to Gemini with only this prompt:
+- `version`
+- `title`
+- `type`
+- `content`
+- `page_settings`
 
-```text
-Describe this screenshot in 5 bullet points.
-```
+Every generated element is validated before export:
 
-If the test is fast but **Generate Template** times out, the issue is likely the Elementor JSON generation prompt or JSON processing pipeline. Debug details are written to the WordPress PHP error log, including `model = gemini-2.5-flash`, timestamps, image size, prompt length, exact prompt, raw response, and the processing stage reached.
+- containers use valid `elType`, `settings`, `elements`, and `isInner`
+- widgets use valid `elType`, `widgetType`, `settings`, and empty `elements`
+- unsupported widget types are rejected before export
 
-The plugin now also returns debug details in the admin screen when generation fails, including the last reached stage and response sizes. The Elementor JSON prompt is intentionally compact and capped to reduce overly large Gemini responses while debugging.
-
-## Raw Gemini response inspection mode
-**Generate Template** shows inspection details when Gemini responds, then the plugin extracts the design specification and builds Elementor JSON through the PHP builder layer. It shows:
-
-- complete raw Gemini response
-- extracted JSON text with markdown fences removed when present
-- saved raw response file link
-
-Use **View Raw Gemini Response** to inspect exactly what Gemini returned before any plugin processing.
-
-## MAX_TOKENS truncation handling
-If Gemini returns `finishReason = MAX_TOKENS`, the response was cut off before the Elementor JSON finished.
-
-The plugin now:
-- increases template generation output allowance to 32,768 tokens
-- logs `finishReason`, output tokens, and total tokens
-- shows the explicit message: `Gemini response was truncated.`
-- keeps raw response inspection mode active
-- provides **Generate Minimal JSON** to request the smallest possible design specification first
-
-Use **Generate Minimal JSON** to check whether Gemini can return a complete compact design specification without truncation before expanding the prompt again.
-
-## Strict Elementor builder mode
-Gemini no longer generates Elementor internals directly.
-
-Current flow:
-1. Gemini returns a simple layout description only (`sections`, headings, text, buttons, items).
-2. WordPress converts that description into Elementor JSON using strict predefined containers and widgets.
-3. The generated elements always include required keys such as `_column_size`, `elementType`, `widgetType`, `settings`, and `elements`.
-4. The template is validated before the JSON download is shown.
-
-This prevents Gemini from inventing invalid Elementor settings and fixes invalid container/column configuration warnings.
-
-## Design specification builder mode
-Design quality now comes from a two-step pipeline:
-
-1. Gemini analyzes the screenshot and returns a design specification, not Elementor internals.
-   - layout type
-   - spacing and section padding
-   - typography sizes and weights
-   - colors and backgrounds
-   - button style
-   - column widths
-   - visual hierarchy
-2. WordPress converts that design specification into Elementor JSON with reusable section generators:
-   - Hero
-   - Stats
-   - Features
-   - Services
-   - CTA
-   - Footer
-
-Gemini is never allowed to invent Elementor internal settings. The PHP builder owns all Elementor keys and validates the final structure before offering the JSON download.
+If validation fails, the plugin shows an error instead of offering a broken JSON file.

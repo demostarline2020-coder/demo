@@ -60,23 +60,31 @@ const ollamaCall = async (imageBase64, mimeType) => {
   return JSON.parse(json.message?.content || '{}');
 };
 
+const elementId = () => Math.random().toString(16).slice(2, 9).padEnd(7, '0');
+
 const buildElementorJson = (analysis) => ({
   version: '0.4',
   title: 'Elementor Vision AI Template',
   type: 'page',
-  content: (analysis.sections || []).map((section, idx) => ({
-    id: `evai_${idx}_${Date.now().toString(36)}`,
+  content: (analysis.sections || []).map((section) => ({
+    id: elementId(),
     elType: 'container',
     isInner: false,
-    settings: { content_width: 'full', flex_direction: section.layout?.direction || 'column', padding: section.spacing?.padding || { unit: 'px', top: 48, right: 32, bottom: 48, left: 32 } },
-    elements: (section.widgets || []).map((w, wid) => ({
-      id: `evai_w_${idx}_${wid}`,
+    settings: {
+      _column_size: 100,
+      content_width: 'full',
+      flex_direction: section.layout?.direction || 'column',
+      padding: section.spacing?.padding || { unit: 'px', top: 48, right: 32, bottom: 48, left: 32 }
+    },
+    elements: (section.widgets || []).map((w) => ({
+      id: elementId(),
       elType: 'widget',
       widgetType: w.type || 'text-editor',
-      settings: w.settings || { editor: w.text || '' },
+      settings: { _column_size: 100, ...(w.settings || { editor: w.text || '' }) },
       elements: []
     }))
-  }))
+  })),
+  page_settings: []
 });
 
 const renderTemplateHtml = (analysis) => `<html><body style="margin:0;font-family:Inter,Arial;background:${analysis.page?.background || '#fff'}">${(analysis.sections||[]).map(s=>`<section style="padding:48px 32px"><h2>${(s.title||'')}</h2></section>`).join('')}</body></html>`;

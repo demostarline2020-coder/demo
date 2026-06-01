@@ -11,8 +11,4 @@
 .evai-settings-wrap .evai-field-group label{display:block;margin-bottom:6px}
 .evai-settings-wrap details summary{cursor:pointer;margin-bottom:10px}
 .evai-actions{display:flex;gap:10px;align-items:center;margin:8px 0 10px}
-.evai-test-output{white-space:pre-wrap;background:#f8fafc;border:1px solid #dcdcde;border-radius:8px;padding:12px;max-width:100%;overflow:auto}
-.evai-raw-wrap{margin:14px 0}
-.evai-raw-output{white-space:pre-wrap;background:#111827;color:#e5e7eb;border-radius:8px;padding:12px;max-height:520px;overflow:auto}
-
 .evai-powered{display:inline-block;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:999px;padding:6px 10px;margin:4px 0 12px;font-weight:600}
