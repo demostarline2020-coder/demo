@@ -159,6 +159,21 @@ class API {
             return new \WP_REST_Response(['error' => 'The AI server returned an invalid response.'], 502);
         }
 
+        if (!empty($body['error'])) {
+            return new \WP_REST_Response($body, wp_remote_retrieve_response_code($response));
+        }
+
+        if (empty($body['elementorJson']) || !is_array($body['elementorJson'])) {
+            return new \WP_REST_Response(['error' => 'The AI server did not return an Elementor template JSON file.'], 502);
+        }
+
+        $validation = self::validate_strict_elementor_template($body['elementorJson']);
+        if (is_wp_error($validation)) {
+            return new \WP_REST_Response([
+                'error' => 'The AI server returned invalid Elementor JSON: ' . $validation->get_error_message(),
+            ], 502);
+        }
+
         return new \WP_REST_Response($body, wp_remote_retrieve_response_code($response));
     }
 

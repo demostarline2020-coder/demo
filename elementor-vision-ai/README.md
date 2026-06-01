@@ -12,7 +12,7 @@ Most WordPress users only need a Google Gemini API key.
 5. Sign in, click **Create API Key**, copy the key, and paste it into the plugin.
 6. Save settings.
 7. Upload a screenshot and click **Generate Template**.
-8. Download the generated JSON and import it into Elementor.
+8. Click **Download Elementor Template** to save `elementor-template-{timestamp}.json`, then import it into Elementor.
 
 No AI Server URL, Node.js, managed worker, or server setup is required for Gemini mode.
 
@@ -74,4 +74,4 @@ Every generated element is validated before export:
 - widgets use valid `elType`, `widgetType`, `settings`, and empty `elements`
 - unsupported widget types are rejected before export
 
-If validation fails, the plugin shows an error instead of offering a broken JSON file.
+If validation fails, the plugin disables the download button and shows an error instead of offering a broken JSON file.
