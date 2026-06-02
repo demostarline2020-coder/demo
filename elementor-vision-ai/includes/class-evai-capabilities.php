@@ -24,12 +24,15 @@ class Capabilities {
             'text-editor',
             'image',
             'icon-box',
+            'image-box',
             'button',
             'html',
             'container',
             'spacer',
             'divider',
             'social-icons',
+            'video',
+            'counter',
         ];
 
         $proWidgets = [
@@ -60,6 +63,8 @@ class Capabilities {
                 'popup' => 'button',
                 'price-table' => 'container_cards',
                 'posts' => 'container_cards',
+                'counter' => 'icon-box',
+                'video' => 'image',
             ],
         ];
     }

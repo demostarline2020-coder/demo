@@ -192,7 +192,12 @@ class API {
             [
                 'key' => 'widget_planning',
                 'label' => 'Elementor widget planning',
-                'prompt' => 'Phase 4: Widget Planning. ' . $capabilityContext . ' Return JSON only: {"sections":[{"index":0,"widgets":[{"visual_element":"navigation|heading|paragraph|feature_card|stat|testimonial|newsletter|form|image|video|button","preferred_widget":"heading|text-editor|image|icon-box|button|html|container|spacer|divider|social-icons|form|nav-menu|loop-grid|slides|popup|price-table|posts","fallback_widget":"html|button|image|icon-box|container_cards","reason":""}]}],"confidence":{"layout":0.0}}. Choose widgets intelligently based on appearance and Elementor availability. Examples: Navigation -> nav-menu if Pro, else HTML/simple links; Newsletter -> form if Pro, else HTML placeholder; Feature Card -> icon-box; Stats -> icon-box or text cards.',
+                'prompt' => 'Phase 4: Widget Planning. ' . $capabilityContext . ' Return JSON only: {"sections":[{"index":0,"widgets":[{"visual_element":"navigation|heading|paragraph|feature_card|stat|testimonial|newsletter|form|image|video|button","preferred_widget":"heading|text-editor|image|icon-box|image-box|button|html|container|spacer|divider|social-icons|video|counter|form|nav-menu|loop-grid|slides|popup|price-table|posts","fallback_widget":"html|button|image|icon-box|container_cards","reason":""}]}],"confidence":{"layout":0.0}}. Choose widgets intelligently based on appearance and Elementor availability. Examples: Navigation -> nav-menu if Pro, else HTML/simple links; Newsletter -> form if Pro, else HTML placeholder; Feature Card -> icon-box or image-box; Stats -> counter if available, else icon-box or text cards; Video Card -> video if available, else image placeholder.',
+            ],
+            [
+                'key' => 'design_system',
+                'label' => 'design system analysis',
+                'prompt' => 'Phase 5: Design System Agent. Build the visual design system only. Return JSON only: {"typography":{"heading_size":"72px","heading_weight":800,"subheading_size":"24px","body_size":"18px","body_weight":400},"spacing":{"section_padding":120,"container_gap":40,"card_gap":24},"colors":{"primary":"#A4C246","background":"#071B12","text":"#FFFFFF","muted":"#CBD5E1"},"borders":{"radius":10,"style":"solid|none"},"shadows":{"style":"none|soft|medium|strong"},"buttons":{"style":"filled|outline|text","radius":8},"confidence":{"typography":0.0,"spacing":0.0,"colors":0.0}}. Focus on reusable design tokens a senior Elementor designer would apply across the page.',
             ],
             [
                 'key' => 'complete_design_specification',
@@ -459,7 +464,7 @@ class API {
 
     private static function elementor_template_prompt(array $capabilities): string {
         $capabilityContext = 'Use only widgets from this Elementor capability map: ' . wp_json_encode($capabilities) . '. ';
-        return $capabilityContext . 'Phase 5: Build the final DESIGN SPECIFICATION JSON only. Do not output Elementor JSON or Elementor settings. Use all previous pass outputs plus the screenshot to synthesize a complete structured design model focused on visual fidelity. Schema: {"confidence":{"layout":0.0,"typography":0.0,"spacing":0.0,"colors":0.0},"sections":[{"type":"header|hero|stats|features|services|cta|footer|content","layout":"1-column|2-column|3-column|grid","heading":"","subheading":"","text":"","buttons":[""],"background_color":"#ffffff","text_color":"#111111","accent_color":"#2563eb","card_background_color":"#ffffff","image_background_color":"#dbeafe","padding_top":100,"padding_right":24,"padding_bottom":100,"padding_left":24,"gap":24,"column_gap":24,"heading_size":"64px","heading_weight":700,"body_size":"18px","alignment":"left|center|right","column_widths":[60,40],"image_position":"left|right|background|none","image_height":420,"button_style":"filled|outline|text","button_radius":8,"border_radius":16,"shadow":"none|soft|medium|strong","widgets":[{"visual_element":"","widget":"heading|text-editor|image|icon-box|button|html|container|spacer|divider|social-icons|form|nav-menu|loop-grid|slides|popup|price-table|posts","fallback_widget":"html|button|image|icon-box|container_cards"}],"items":[{"title":"","text":"","value":""}]}]}. Max 8 sections, max 8 items per section. Confidence values must be 0 to 1. No markdown.';
+        return $capabilityContext . 'Phase 5: Build the final DESIGN SPECIFICATION JSON only. Do not output Elementor JSON or Elementor settings. Use all previous pass outputs (visual analysis, layout blueprint, widget plan, and design system) plus the screenshot to synthesize a complete structured design model focused on visual fidelity. Schema: {"confidence":{"layout":0.0,"typography":0.0,"spacing":0.0,"colors":0.0},"sections":[{"type":"header|hero|stats|features|services|cta|footer|content","layout":"1-column|2-column|3-column|grid","heading":"","subheading":"","text":"","buttons":[""],"background_color":"#ffffff","text_color":"#111111","accent_color":"#2563eb","card_background_color":"#ffffff","image_background_color":"#dbeafe","padding_top":100,"padding_right":24,"padding_bottom":100,"padding_left":24,"gap":24,"column_gap":24,"heading_size":"64px","heading_weight":700,"body_size":"18px","alignment":"left|center|right","column_widths":[60,40],"image_position":"left|right|background|none","image_height":420,"button_style":"filled|outline|text","button_radius":8,"border_radius":16,"shadow":"none|soft|medium|strong","widgets":[{"visual_element":"","widget":"heading|text-editor|image|icon-box|image-box|button|html|container|spacer|divider|social-icons|video|counter|form|nav-menu|loop-grid|slides|popup|price-table|posts","fallback_widget":"html|button|image|icon-box|container_cards"}],"items":[{"title":"","text":"","value":""}]}]}. Max 8 sections, max 8 items per section. Confidence values must be 0 to 1. No markdown.';
     }
 
     private static function build_elementor_template_from_layout(array $designSpec) {
@@ -553,8 +558,16 @@ class API {
         $items = self::items($section, 6);
         $cards = [];
         foreach ($items as $item) {
+            $statWidget = Capabilities::widget_available('counter') && self::section_requests_widget($section, 'counter')
+                ? self::widget('counter', [
+                    '_column_size' => 100,
+                    'ending_number' => preg_replace('/[^0-9]/', '', strval($item['value'] ?? '0')) ?: '0',
+                    'title' => sanitize_text_field($item['title'] ?? ''),
+                ])
+                : self::heading_widget($item['value'] ?: ($item['title'] ?? ''), 'h3', $section, 'stat');
+
             $cards[] = self::container([
-                self::heading_widget($item['value'] ?: ($item['title'] ?? ''), 'h3', $section, 'stat'),
+                $statWidget,
                 self::text_widget($item['text'] ?: ($item['title'] ?? ''), $section),
             ], true, self::card_settings($section, 25));
         }
@@ -581,6 +594,19 @@ class API {
                 $cardElements[] = self::text_widget($item['text'], $section);
             }
             if ($cardElements !== []) {
+                if (Capabilities::widget_available('icon-box') && self::section_requests_widget($section, 'icon-box')) {
+                    $cardElements = [self::widget('icon-box', [
+                        '_column_size' => 100,
+                        'title_text' => sanitize_text_field($item['title'] ?? ''),
+                        'description_text' => sanitize_text_field($item['text'] ?? ''),
+                    ])];
+                } elseif (Capabilities::widget_available('image-box') && self::section_requests_widget($section, 'image-box')) {
+                    $cardElements = [self::widget('image-box', [
+                        '_column_size' => 100,
+                        'title_text' => sanitize_text_field($item['title'] ?? ''),
+                        'description_text' => sanitize_text_field($item['text'] ?? ''),
+                    ])];
+                }
                 $cards[] = self::container($cardElements, true, self::card_settings($section, 33));
             }
         }
