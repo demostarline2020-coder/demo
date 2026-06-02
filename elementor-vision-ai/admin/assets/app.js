@@ -39,6 +39,15 @@
     return '';
   };
 
+  const confidenceBlock = (scores) => {
+    if (!scores) return null;
+    const labels = ['layout', 'spacing', 'typography', 'colors'];
+    return wp.element.createElement('div', { className: 'evai-confidence' }, [
+      wp.element.createElement('strong', null, 'Design confidence'),
+      ...labels.map((label) => wp.element.createElement('span', { className: 'evai-confidence-item' }, `${label}: ${Math.round((Number(scores[label]) || 0) * 100)}%`)),
+    ]);
+  };
+
   function App() {
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -71,7 +80,7 @@
       setLoading(true);
       setResult(null);
       setValidationError('');
-      setStatus('Analyzing screenshot with Gemini 2.5 Flash...');
+      setStatus('Running multi-pass visual analysis with Gemini 2.5 Flash...');
 
       const fd = new FormData();
       fd.append('image', file);
@@ -126,6 +135,7 @@
         result?.elementorJson ? wp.element.createElement('button', { className: 'button button-primary', disabled: !canDownload, onClick: downloadTemplate }, 'Download Elementor Template') : null,
       ]),
       wp.element.createElement('p', { className: validationError ? 'evai-status evai-error' : 'evai-status' }, validationError ? `Download disabled: ${validationError}` : status),
+      result?.confidenceScores ? confidenceBlock(result.confidenceScores) : null,
       result?.previewImage ? wp.element.createElement('img', { src: `data:image/png;base64,${result.previewImage}`, className: 'evai-preview' }) : null,
     ]);
   }

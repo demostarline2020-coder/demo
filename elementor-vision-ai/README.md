@@ -52,12 +52,18 @@ https://ai.youragency.com
 - Best for agencies/advanced users
 
 ## Production architecture
-Screenshot → Gemini 2.5 Flash → Design Specification JSON → Elementor Builder Layer → Valid Elementor JSON → Rendered Page
+Screenshot → Multi-pass Gemini 2.5 Flash analysis → Design Specification JSON → Elementor Builder Layer → Valid Elementor JSON → Rendered Page
 
-- Gemini analyzes layout, spacing, typography, colors, alignment, and visual hierarchy.
-- Gemini does **not** generate Elementor internal schema.
-- WordPress converts the design specification into Elementor containers and widgets.
-- The plugin validates the Elementor template before the download button is shown.
+Gemini does **not** generate Elementor internal schema. It first creates a structured design model across multiple focused passes:
+
+1. Section and layout hierarchy detection.
+2. Spacing, dimensions, container widths, padding, and margins.
+3. Typography hierarchy, font sizes, font weights, and alignment.
+4. Colors, backgrounds, borders, shadows, and button styles.
+5. Complete design specification synthesis with confidence scores.
+6. WordPress converts the design specification into Elementor containers and widgets.
+
+The plugin returns confidence scores for layout, spacing, typography, and colors so users can understand how reliable the visual analysis was. The plugin validates the Elementor template before the download button is shown.
 
 ## Elementor import compatibility
 The exported JSON follows Elementor template structure:

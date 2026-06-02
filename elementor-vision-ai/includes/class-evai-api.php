@@ -86,24 +86,12 @@ class API {
         }
 
         $model = self::GEMINI_MODEL;
-        $result = self::call_gemini_with_retries($apiKey, $model, self::elementor_template_prompt(), $imageBase64, $mimeType, $imageSize, true, 'design_specification');
-        if (is_wp_error($result)) {
-            return self::gemini_error_response($result, 502);
+        $analysis = self::run_multi_pass_design_analysis($apiKey, $model, $imageBase64, $mimeType, $imageSize);
+        if (is_wp_error($analysis)) {
+            return self::gemini_error_response($analysis, 502);
         }
 
-        if (($result['finish_reason'] ?? '') === 'MAX_TOKENS') {
-            return new \WP_REST_Response([
-                'error' => 'Gemini response was truncated. Please try again with a smaller or clearer screenshot.',
-            ], 422);
-        }
-
-        $layout = json_decode(self::extract_json_text($result['text']), true);
-        if (!is_array($layout)) {
-            return new \WP_REST_Response([
-                'error' => 'Gemini returned an unreadable design description. Please try again with a clearer screenshot.',
-            ], 422);
-        }
-
+        $layout = $analysis['design_specification'];
         $template = self::build_elementor_template_from_layout($layout);
         if (is_wp_error($template)) {
             return new \WP_REST_Response(['error' => $template->get_error_message()], 422);
@@ -122,8 +110,81 @@ class API {
             'previewImage' => $imageBase64,
             'mode' => 'strict-elementor',
             'model' => $model,
+            'confidenceScores' => self::confidence_scores($layout),
             'message' => 'Valid Elementor template generated. Import this JSON into Elementor.',
         ], 200);
+    }
+
+    private static function run_multi_pass_design_analysis(string $apiKey, string $model, string $imageBase64, string $mimeType, int $imageSize) {
+        $passes = [];
+        foreach (self::analysis_pass_prompts() as $pass) {
+            $prompt = $pass['prompt'];
+            if ($passes !== []) {
+                $prompt .= "\n\nPrevious pass outputs for context:\n" . wp_json_encode($passes);
+            }
+
+            $result = self::call_gemini_with_retries($apiKey, $model, $prompt, $imageBase64, $mimeType, $imageSize, true, $pass['key']);
+            if (is_wp_error($result)) {
+                return $result;
+            }
+
+            if (($result['finish_reason'] ?? '') === 'MAX_TOKENS') {
+                return new \WP_Error('evai_gemini_truncated', 'Gemini response was truncated during ' . $pass['label'] . '. Please try again with a smaller or clearer screenshot.');
+            }
+
+            $decoded = json_decode(self::extract_json_text($result['text']), true);
+            if (!is_array($decoded)) {
+                return new \WP_Error('evai_gemini_unreadable_pass', 'Gemini returned an unreadable design analysis during ' . $pass['label'] . '. Please try again with a clearer screenshot.');
+            }
+
+            $passes[$pass['key']] = $decoded;
+            self::production_log('analysis_pass_complete', [
+                'model' => $model,
+                'pass' => $pass['key'],
+            ]);
+        }
+
+        $designSpec = $passes['complete_design_specification'] ?? [];
+        if (!is_array($designSpec) || empty($designSpec['sections'])) {
+            return new \WP_Error('evai_design_spec_missing', 'Gemini did not return a complete design specification. Please try another screenshot.');
+        }
+
+        $designSpec['confidence'] = self::normalize_confidence_scores($designSpec['confidence'] ?? []);
+
+        return [
+            'passes' => $passes,
+            'design_specification' => $designSpec,
+        ];
+    }
+
+    private static function analysis_pass_prompts(): array {
+        return [
+            [
+                'key' => 'section_layout_hierarchy',
+                'label' => 'section and layout hierarchy analysis',
+                'prompt' => 'Pass 1 of 5. Analyze screenshot structure only. Return JSON only: {"sections":[{"index":0,"type":"hero|stats|features|services|cta|footer|content","visual_role":"","layout":"1-column|2-column|3-column|grid","hierarchy":"primary|secondary|supporting","columns":1,"contains":["heading","text","button","image","card","stat"],"notes":""}],"confidence":{"layout":0.0}}. Focus on section boundaries, nesting, grids, column count, and visual hierarchy. Do not output Elementor JSON.',
+            ],
+            [
+                'key' => 'spacing_dimensions',
+                'label' => 'spacing and dimensions analysis',
+                'prompt' => 'Pass 2 of 5. Analyze spacing and dimensions only. Return JSON only: {"sections":[{"index":0,"container_width":1200,"content_width_percent":100,"column_widths":[60,40],"padding_top":100,"padding_right":24,"padding_bottom":100,"padding_left":24,"row_gap":24,"column_gap":24,"item_gap":16,"min_height":0,"notes":""}],"confidence":{"spacing":0.0}}. Estimate pixels from screenshot. Do not output Elementor JSON.',
+            ],
+            [
+                'key' => 'typography_system',
+                'label' => 'typography analysis',
+                'prompt' => 'Pass 3 of 5. Analyze typography only. Return JSON only: {"sections":[{"index":0,"heading_size":"64px","heading_weight":700,"body_size":"18px","body_weight":400,"alignment":"left|center|right","line_height":1.2,"letter_spacing":0,"text_transform":"none|uppercase","notes":""}],"confidence":{"typography":0.0}}. Estimate font size, weight, hierarchy, and text alignment. Do not output Elementor JSON.',
+            ],
+            [
+                'key' => 'color_style_system',
+                'label' => 'color and style analysis',
+                'prompt' => 'Pass 4 of 5. Analyze colors and visual styling only. Return JSON only: {"sections":[{"index":0,"background_color":"#ffffff","text_color":"#111111","accent_color":"#2563eb","card_background_color":"#ffffff","image_background_color":"#dbeafe","button_style":"filled|outline|text","button_radius":8,"border_radius":16,"shadow":"none|soft|medium|strong","border_color":"#e5e7eb","notes":""}],"confidence":{"colors":0.0}}. Estimate backgrounds, borders, shadows, buttons, and color hierarchy. Do not output Elementor JSON.',
+            ],
+            [
+                'key' => 'complete_design_specification',
+                'label' => 'complete design specification synthesis',
+                'prompt' => self::elementor_template_prompt(),
+            ],
+        ];
     }
 
     private static function generate_with_worker(string $imageBase64, string $mimeType, string $filename): \WP_REST_Response {
@@ -382,7 +443,7 @@ class API {
     }
 
     private static function elementor_template_prompt(): string {
-        return 'Analyze this webpage screenshot and return DESIGN SPECIFICATION JSON only. Do not output Elementor JSON or Elementor settings. WordPress will build Elementor JSON. Capture layout structure, spacing, typography hierarchy, colors, section backgrounds, image positions, button styles, column widths, alignment, visual hierarchy. Schema: {"sections":[{"type":"hero|stats|features|services|cta|footer|content","layout":"1-column|2-column|3-column|grid","heading":"","subheading":"","text":"","buttons":[""],"background_color":"#ffffff","text_color":"#111111","accent_color":"#2563eb","padding_top":100,"padding_bottom":100,"heading_size":"64px","heading_weight":700,"body_size":"18px","alignment":"left|center|right","column_widths":[60,40],"image_position":"left|right|background|none","button_style":"filled|outline|text","items":[{"title":"","text":"","value":""}]}]}. Max 8 sections, max 8 items per section. No markdown.';
+        return 'Pass 5 of 5. Build the final DESIGN SPECIFICATION JSON only. Do not output Elementor JSON or Elementor settings. Use the previous pass outputs plus the screenshot to synthesize a complete structured design model focused on visual fidelity. Schema: {"confidence":{"layout":0.0,"typography":0.0,"spacing":0.0,"colors":0.0},"sections":[{"type":"hero|stats|features|services|cta|footer|content","layout":"1-column|2-column|3-column|grid","heading":"","subheading":"","text":"","buttons":[""],"background_color":"#ffffff","text_color":"#111111","accent_color":"#2563eb","card_background_color":"#ffffff","image_background_color":"#dbeafe","padding_top":100,"padding_right":24,"padding_bottom":100,"padding_left":24,"gap":24,"column_gap":24,"heading_size":"64px","heading_weight":700,"body_size":"18px","alignment":"left|center|right","column_widths":[60,40],"image_position":"left|right|background|none","image_height":420,"button_style":"filled|outline|text","button_radius":8,"border_radius":16,"shadow":"none|soft|medium|strong","items":[{"title":"","text":"","value":""}]}]}. Max 8 sections, max 8 items per section. Confidence values must be 0 to 1. No markdown.';
     }
 
     private static function build_elementor_template_from_layout(array $designSpec) {
@@ -570,11 +631,14 @@ class API {
             'content_width' => 'boxed',
             'width' => ['unit' => '%', 'size' => 100],
             'flex_direction' => $direction,
-            'flex_gap' => ['unit' => 'px', 'size' => self::int_value($section['gap'] ?? 24, 24, 0, 100)],
+            'flex_gap' => ['unit' => 'px', 'size' => self::int_value($section['gap'] ?? $section['item_gap'] ?? 24, 24, 0, 100)],
             'justify_content' => self::flex_alignment($section),
             'align_items' => $direction === 'row' ? 'center' : self::flex_alignment($section),
             'background_background' => 'classic',
             'background_color' => self::color($section['background_color'] ?? '#ffffff', '#ffffff'),
+            'border_radius' => self::box_values(self::int_value($section['border_radius'] ?? 0, 0, 0, 80), self::int_value($section['border_radius'] ?? 0, 0, 0, 80), self::int_value($section['border_radius'] ?? 0, 0, 0, 80), self::int_value($section['border_radius'] ?? 0, 0, 0, 80)),
+            'box_shadow_box_shadow_type' => self::shadow_value($section) === 'none' ? '' : 'yes',
+            'box_shadow_box_shadow' => self::box_shadow($section),
             'padding' => self::box_values(
                 self::int_value($section['padding_top'] ?? null, self::default_padding($section), 0, 240),
                 self::int_value($section['padding_right'] ?? null, 24, 0, 160),
@@ -699,7 +763,9 @@ class API {
             'background_background' => 'classic',
             'background_color' => self::color($section['card_background_color'] ?? '#ffffff', '#ffffff'),
             'padding' => self::box_values(24, 24, 24, 24),
-            'border_radius' => self::box_values(16, 16, 16, 16),
+            'border_radius' => self::box_values(self::int_value($section['border_radius'] ?? 16, 16, 0, 80), self::int_value($section['border_radius'] ?? 16, 16, 0, 80), self::int_value($section['border_radius'] ?? 16, 16, 0, 80), self::int_value($section['border_radius'] ?? 16, 16, 0, 80)),
+            'box_shadow_box_shadow_type' => self::shadow_value($section) === 'none' ? '' : 'yes',
+            'box_shadow_box_shadow' => self::box_shadow($section),
             'gap' => ['unit' => 'px', 'size' => 12],
         ];
     }
@@ -730,6 +796,34 @@ class API {
             'right' => 'flex-end',
             default => 'flex-start',
         };
+    }
+
+    private static function shadow_value(array $section): string {
+        $shadow = is_scalar($section['shadow'] ?? null) ? sanitize_key(strval($section['shadow'])) : 'none';
+        return in_array($shadow, ['none', 'soft', 'medium', 'strong'], true) ? $shadow : 'none';
+    }
+
+    private static function box_shadow(array $section): array {
+        return match (self::shadow_value($section)) {
+            'soft' => ['horizontal' => 0, 'vertical' => 10, 'blur' => 24, 'spread' => 0, 'color' => 'rgba(15, 23, 42, 0.10)'],
+            'medium' => ['horizontal' => 0, 'vertical' => 18, 'blur' => 42, 'spread' => 0, 'color' => 'rgba(15, 23, 42, 0.16)'],
+            'strong' => ['horizontal' => 0, 'vertical' => 26, 'blur' => 64, 'spread' => 0, 'color' => 'rgba(15, 23, 42, 0.24)'],
+            default => [],
+        };
+    }
+
+    private static function normalize_confidence_scores($scores): array {
+        $scores = is_array($scores) ? $scores : [];
+        return [
+            'layout' => self::float_value($scores['layout'] ?? 0.5, 0.5, 0, 1),
+            'typography' => self::float_value($scores['typography'] ?? 0.5, 0.5, 0, 1),
+            'spacing' => self::float_value($scores['spacing'] ?? 0.5, 0.5, 0, 1),
+            'colors' => self::float_value($scores['colors'] ?? 0.5, 0.5, 0, 1),
+        ];
+    }
+
+    private static function confidence_scores(array $designSpec): array {
+        return self::normalize_confidence_scores($designSpec['confidence'] ?? []);
     }
 
     private static function default_padding(array $section): int {
@@ -773,6 +867,13 @@ class API {
             return $default;
         }
         return max($min, min($max, (int)round((float)$value)));
+    }
+
+    private static function float_value($value, float $default, float $min, float $max): float {
+        if (!is_numeric($value)) {
+            return $default;
+        }
+        return max($min, min($max, round((float)$value, 2)));
     }
 
     private static function clean_elementor_settings(array $settings): array {
