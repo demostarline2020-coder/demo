@@ -42,6 +42,7 @@ class API {
                 'message' => 'Powered by Gemini 2.5 Flash. No AI Server URL is required.',
                 'mode' => 'gemini',
                 'model' => self::GEMINI_MODEL,
+                'capabilities' => Capabilities::map(),
             ], 200);
         }
 
@@ -86,7 +87,8 @@ class API {
         }
 
         $model = self::GEMINI_MODEL;
-        $analysis = self::run_multi_pass_design_analysis($apiKey, $model, $imageBase64, $mimeType, $imageSize);
+        $capabilities = Capabilities::map();
+        $analysis = self::run_multi_pass_design_analysis($apiKey, $model, $imageBase64, $mimeType, $imageSize, $capabilities);
         if (is_wp_error($analysis)) {
             return self::gemini_error_response($analysis, 502);
         }
@@ -111,13 +113,14 @@ class API {
             'mode' => 'strict-elementor',
             'model' => $model,
             'confidenceScores' => self::confidence_scores($layout),
+            'capabilityMap' => $capabilities,
             'message' => 'Valid Elementor template generated. Import this JSON into Elementor.',
         ], 200);
     }
 
-    private static function run_multi_pass_design_analysis(string $apiKey, string $model, string $imageBase64, string $mimeType, int $imageSize) {
+    private static function run_multi_pass_design_analysis(string $apiKey, string $model, string $imageBase64, string $mimeType, int $imageSize, array $capabilities) {
         $passes = [];
-        foreach (self::analysis_pass_prompts() as $pass) {
+        foreach (self::analysis_pass_prompts($capabilities) as $pass) {
             $prompt = $pass['prompt'];
             if ($passes !== []) {
                 $prompt .= "\n\nPrevious pass outputs for context:\n" . wp_json_encode($passes);
@@ -157,32 +160,44 @@ class API {
         ];
     }
 
-    private static function analysis_pass_prompts(): array {
+    private static function analysis_pass_prompts(array $capabilities): array {
+        $capabilityContext = 'Current Elementor capability map. The planner may only choose widgets from available_widgets and must use fallbacks when a Pro widget is unavailable: ' . wp_json_encode($capabilities);
+
         return [
             [
-                'key' => 'section_layout_hierarchy',
-                'label' => 'section and layout hierarchy analysis',
-                'prompt' => 'Pass 1 of 5. Analyze screenshot structure only. Return JSON only: {"sections":[{"index":0,"type":"hero|stats|features|services|cta|footer|content","visual_role":"","layout":"1-column|2-column|3-column|grid","hierarchy":"primary|secondary|supporting","columns":1,"contains":["heading","text","button","image","card","stat"],"notes":""}],"confidence":{"layout":0.0}}. Focus on section boundaries, nesting, grids, column count, and visual hierarchy. Do not output Elementor JSON.',
+                'key' => 'human_visual_analysis',
+                'label' => 'human-like visual analysis',
+                'prompt' => 'Phase 2: Visual Analysis Agent. Analyze this screenshot like an experienced web and Elementor designer. Do not output Elementor JSON. Return JSON only: {"page_tree":["Header","Hero","Stats","Services","Features","CTA","Footer"],"sections":[{"index":0,"name":"","type":"header|hero|stats|features|services|cta|footer|content","hierarchy":"primary|secondary|supporting","visual_role":"","content_hierarchy":["heading","description","buttons"],"visual_elements":["image","video","cards","icons","cta"],"alignment":"left|center|right","notes":""}],"confidence":{"layout":0.0}}. Focus on number of sections, hierarchy, layout structure, visual hierarchy, spacing relationships, alignment, typography hierarchy, colors, backgrounds, images, videos, cards, icons, and CTA areas.',
+            ],
+            [
+                'key' => 'layout_tree',
+                'label' => 'layout tree planning',
+                'prompt' => 'Phase 3: Layout Tree. Create a nested layout tree for every section. Do not output Elementor JSON. Return JSON only: {"sections":[{"index":0,"type":"hero","layout_tree":{"name":"Main Container","direction":"row|column","children":[{"name":"Left Container","direction":"column","width_percent":60,"children":["Heading","Description","Buttons"]},{"name":"Right Container","direction":"column","width_percent":40,"children":["Image or Video Area"]}]},"container_count":3,"nested_containers":2,"column_count":2,"flex_direction":"row|column","responsive":{"tablet":"stack|keep","mobile":"stack"}}],"confidence":{"layout":0.0,"spacing":0.0}}. Determine container count, nested containers, columns, flex settings, and responsive structure.',
             ],
             [
                 'key' => 'spacing_dimensions',
                 'label' => 'spacing and dimensions analysis',
-                'prompt' => 'Pass 2 of 5. Analyze spacing and dimensions only. Return JSON only: {"sections":[{"index":0,"container_width":1200,"content_width_percent":100,"column_widths":[60,40],"padding_top":100,"padding_right":24,"padding_bottom":100,"padding_left":24,"row_gap":24,"column_gap":24,"item_gap":16,"min_height":0,"notes":""}],"confidence":{"spacing":0.0}}. Estimate pixels from screenshot. Do not output Elementor JSON.',
+                'prompt' => 'Phase 3 detail: Spacing and dimensions. Return JSON only: {"sections":[{"index":0,"container_width":1200,"content_width_percent":100,"column_widths":[60,40],"padding_top":100,"padding_right":24,"padding_bottom":100,"padding_left":24,"margin_top":0,"margin_bottom":0,"row_gap":24,"column_gap":24,"item_gap":16,"min_height":0,"notes":""}],"confidence":{"spacing":0.0}}. Estimate pixels from screenshot and preserve visual proportions.',
             ],
             [
                 'key' => 'typography_system',
                 'label' => 'typography analysis',
-                'prompt' => 'Pass 3 of 5. Analyze typography only. Return JSON only: {"sections":[{"index":0,"heading_size":"64px","heading_weight":700,"body_size":"18px","body_weight":400,"alignment":"left|center|right","line_height":1.2,"letter_spacing":0,"text_transform":"none|uppercase","notes":""}],"confidence":{"typography":0.0}}. Estimate font size, weight, hierarchy, and text alignment. Do not output Elementor JSON.',
+                'prompt' => 'Phase 5 detail: Typography. Return JSON only: {"sections":[{"index":0,"heading_size":"64px","heading_weight":700,"body_size":"18px","body_weight":400,"alignment":"left|center|right","line_height":1.2,"letter_spacing":0,"text_transform":"none|uppercase","notes":""}],"confidence":{"typography":0.0}}. Estimate font sizes, weights, hierarchy, line-height, and text alignment.',
             ],
             [
                 'key' => 'color_style_system',
                 'label' => 'color and style analysis',
-                'prompt' => 'Pass 4 of 5. Analyze colors and visual styling only. Return JSON only: {"sections":[{"index":0,"background_color":"#ffffff","text_color":"#111111","accent_color":"#2563eb","card_background_color":"#ffffff","image_background_color":"#dbeafe","button_style":"filled|outline|text","button_radius":8,"border_radius":16,"shadow":"none|soft|medium|strong","border_color":"#e5e7eb","notes":""}],"confidence":{"colors":0.0}}. Estimate backgrounds, borders, shadows, buttons, and color hierarchy. Do not output Elementor JSON.',
+                'prompt' => 'Phase 5 detail: Colors and visual styling. Return JSON only: {"sections":[{"index":0,"background_color":"#ffffff","text_color":"#111111","accent_color":"#2563eb","card_background_color":"#ffffff","image_background_color":"#dbeafe","button_style":"filled|outline|text","button_radius":8,"border_radius":16,"shadow":"none|soft|medium|strong","border_color":"#e5e7eb","notes":""}],"confidence":{"colors":0.0}}. Estimate colors, backgrounds, borders, shadows, buttons, cards, images, and style hierarchy.',
+            ],
+            [
+                'key' => 'widget_planning',
+                'label' => 'Elementor widget planning',
+                'prompt' => 'Phase 4: Widget Planning. ' . $capabilityContext . ' Return JSON only: {"sections":[{"index":0,"widgets":[{"visual_element":"navigation|heading|paragraph|feature_card|stat|testimonial|newsletter|form|image|video|button","preferred_widget":"heading|text-editor|image|icon-box|button|html|container|spacer|divider|social-icons|form|nav-menu|loop-grid|slides|popup|price-table|posts","fallback_widget":"html|button|image|icon-box|container_cards","reason":""}]}],"confidence":{"layout":0.0}}. Choose widgets intelligently based on appearance and Elementor availability. Examples: Navigation -> nav-menu if Pro, else HTML/simple links; Newsletter -> form if Pro, else HTML placeholder; Feature Card -> icon-box; Stats -> icon-box or text cards.',
             ],
             [
                 'key' => 'complete_design_specification',
                 'label' => 'complete design specification synthesis',
-                'prompt' => self::elementor_template_prompt(),
+                'prompt' => self::elementor_template_prompt($capabilities),
             ],
         ];
     }
@@ -442,8 +457,9 @@ class API {
         return $expectJson ? 32768 : 1024;
     }
 
-    private static function elementor_template_prompt(): string {
-        return 'Pass 5 of 5. Build the final DESIGN SPECIFICATION JSON only. Do not output Elementor JSON or Elementor settings. Use the previous pass outputs plus the screenshot to synthesize a complete structured design model focused on visual fidelity. Schema: {"confidence":{"layout":0.0,"typography":0.0,"spacing":0.0,"colors":0.0},"sections":[{"type":"hero|stats|features|services|cta|footer|content","layout":"1-column|2-column|3-column|grid","heading":"","subheading":"","text":"","buttons":[""],"background_color":"#ffffff","text_color":"#111111","accent_color":"#2563eb","card_background_color":"#ffffff","image_background_color":"#dbeafe","padding_top":100,"padding_right":24,"padding_bottom":100,"padding_left":24,"gap":24,"column_gap":24,"heading_size":"64px","heading_weight":700,"body_size":"18px","alignment":"left|center|right","column_widths":[60,40],"image_position":"left|right|background|none","image_height":420,"button_style":"filled|outline|text","button_radius":8,"border_radius":16,"shadow":"none|soft|medium|strong","items":[{"title":"","text":"","value":""}]}]}. Max 8 sections, max 8 items per section. Confidence values must be 0 to 1. No markdown.';
+    private static function elementor_template_prompt(array $capabilities): string {
+        $capabilityContext = 'Use only widgets from this Elementor capability map: ' . wp_json_encode($capabilities) . '. ';
+        return $capabilityContext . 'Phase 5: Build the final DESIGN SPECIFICATION JSON only. Do not output Elementor JSON or Elementor settings. Use all previous pass outputs plus the screenshot to synthesize a complete structured design model focused on visual fidelity. Schema: {"confidence":{"layout":0.0,"typography":0.0,"spacing":0.0,"colors":0.0},"sections":[{"type":"header|hero|stats|features|services|cta|footer|content","layout":"1-column|2-column|3-column|grid","heading":"","subheading":"","text":"","buttons":[""],"background_color":"#ffffff","text_color":"#111111","accent_color":"#2563eb","card_background_color":"#ffffff","image_background_color":"#dbeafe","padding_top":100,"padding_right":24,"padding_bottom":100,"padding_left":24,"gap":24,"column_gap":24,"heading_size":"64px","heading_weight":700,"body_size":"18px","alignment":"left|center|right","column_widths":[60,40],"image_position":"left|right|background|none","image_height":420,"button_style":"filled|outline|text","button_radius":8,"border_radius":16,"shadow":"none|soft|medium|strong","widgets":[{"visual_element":"","widget":"heading|text-editor|image|icon-box|button|html|container|spacer|divider|social-icons|form|nav-menu|loop-grid|slides|popup|price-table|posts","fallback_widget":"html|button|image|icon-box|container_cards"}],"items":[{"title":"","text":"","value":""}]}]}. Max 8 sections, max 8 items per section. Confidence values must be 0 to 1. No markdown.';
     }
 
     private static function build_elementor_template_from_layout(array $designSpec) {
@@ -479,7 +495,7 @@ class API {
         }
 
         $sections = [];
-        foreach (['hero', 'stats', 'features', 'services', 'cta', 'footer'] as $type) {
+        foreach (['header', 'hero', 'stats', 'features', 'services', 'cta', 'footer'] as $type) {
             if (!empty($designSpec[$type]) && is_array($designSpec[$type])) {
                 $section = $designSpec[$type];
                 $section['type'] = $section['type'] ?? $type;
@@ -492,6 +508,7 @@ class API {
     private static function build_section_from_design_spec(array $section): array {
         $type = sanitize_key($section['type'] ?? 'content');
         return match ($type) {
+            'header' => self::header_section($section),
             'hero' => self::hero_section($section),
             'stats' => self::stats_section($section),
             'features' => self::features_section($section),
@@ -500,6 +517,21 @@ class API {
             'footer' => self::footer_section($section),
             default => self::content_section($section),
         };
+    }
+
+    private static function header_section(array $section): array {
+        $brand = self::heading_widget($section['heading'] ?? 'Logo', 'h3', array_merge($section, ['heading_size' => $section['heading_size'] ?? '24px']), 'card');
+        $navWidget = Capabilities::widget_available('nav-menu') && self::section_requests_widget($section, 'nav-menu')
+            ? self::widget('nav-menu', ['_column_size' => 100])
+            : self::widget('html', [
+                '_column_size' => 100,
+                'html' => '<nav><a href="#">Home</a> &nbsp; <a href="#">Services</a> &nbsp; <a href="#">Contact</a></nav>',
+            ]);
+
+        return self::section_container($section, [
+            self::container([$brand], true, self::column_settings(30, 'column')),
+            self::container([$navWidget], true, self::column_settings(70, 'column')),
+        ], 'row');
     }
 
     private static function hero_section(array $section): array {
@@ -739,6 +771,25 @@ class API {
         ];
     }
 
+    private static function section_requests_widget(array $section, string $widgetType): bool {
+        if (empty($section['widgets']) || !is_array($section['widgets'])) {
+            return false;
+        }
+
+        foreach ($section['widgets'] as $widgetPlan) {
+            if (!is_array($widgetPlan)) {
+                continue;
+            }
+            $planned = sanitize_key(strval($widgetPlan['widget'] ?? $widgetPlan['preferred_widget'] ?? ''));
+            $fallback = sanitize_key(strval($widgetPlan['fallback_widget'] ?? ''));
+            if ($planned === $widgetType || $fallback === $widgetType) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static function items(array $section, int $limit): array {
         if (empty($section['items']) || !is_array($section['items'])) {
             return [];
@@ -935,7 +986,7 @@ class API {
         }
 
         if ($element['elType'] === 'widget') {
-            $allowedWidgets = ['heading', 'text-editor', 'button', 'image', 'icon-box', 'spacer'];
+            $allowedWidgets = Capabilities::map()['available_widgets'];
             if (empty($element['widgetType']) || !in_array($element['widgetType'], $allowedWidgets, true)) {
                 return new \WP_Error('evai_missing_widget_type', 'Elementor widget type is missing or unsupported.');
             }

@@ -7,6 +7,7 @@ if (!defined('ABSPATH')) {
 }
 
 require_once EVAI_PLUGIN_DIR . 'includes/class-evai-settings.php';
+require_once EVAI_PLUGIN_DIR . 'includes/class-evai-capabilities.php';
 require_once EVAI_PLUGIN_DIR . 'includes/class-evai-admin.php';
 require_once EVAI_PLUGIN_DIR . 'includes/class-evai-api.php';
 
@@ -26,6 +27,7 @@ class Plugin {
 
     public function init(): void {
         Settings::register();
+        Capabilities::refresh();
         Admin::register();
         API::register();
     }

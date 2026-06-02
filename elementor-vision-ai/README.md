@@ -52,18 +52,25 @@ https://ai.youragency.com
 - Best for agencies/advanced users
 
 ## Production architecture
-Screenshot → Multi-pass Gemini 2.5 Flash analysis → Design Specification JSON → Elementor Builder Layer → Valid Elementor JSON → Rendered Page
+Screenshot → Human-like Visual Analysis → Layout Planning → Widget Planning → Design Specification JSON → Elementor Builder Layer → Valid Elementor JSON
 
-Gemini does **not** generate Elementor internal schema. It first creates a structured design model across multiple focused passes:
+On initialization the plugin detects Elementor capabilities:
 
-1. Section and layout hierarchy detection.
-2. Spacing, dimensions, container widths, padding, and margins.
-3. Typography hierarchy, font sizes, font weights, and alignment.
-4. Colors, backgrounds, borders, shadows, and button styles.
-5. Complete design specification synthesis with confidence scores.
-6. WordPress converts the design specification into Elementor containers and widgets.
+- Elementor Free widgets such as Heading, Text Editor, Image, Icon Box, Button, HTML, Container, Spacer, Divider, and Social Icons.
+- Elementor Pro widgets such as Form, Nav Menu, Loop Grid, Slides, Popup, Price Table, Posts, and Theme widgets when Elementor Pro is installed.
 
-The plugin returns confidence scores for layout, spacing, typography, and colors so users can understand how reliable the visual analysis was. The plugin validates the Elementor template before the download button is shown.
+Gemini does **not** generate Elementor internal schema. It first creates a structured design model across focused planning phases:
+
+1. Human-like visual analysis of the full page and section hierarchy.
+2. Layout tree planning with containers, nested containers, columns, flex direction, and responsive behavior.
+3. Spacing and dimensions, including widths, padding, margins, and gaps.
+4. Typography hierarchy, font sizes, font weights, and alignment.
+5. Colors, backgrounds, borders, shadows, and button styles.
+6. Widget planning based on the detected Elementor Free/Pro capability map.
+7. Complete design specification synthesis with confidence scores.
+8. WordPress converts the design specification into Elementor containers and widgets.
+
+The AI planner may only choose widgets that exist in the current Elementor installation. If a Pro widget is unavailable, the planner uses a free fallback such as HTML placeholders or container/card structures. The plugin returns confidence scores for layout, spacing, typography, and colors, then validates the Elementor template before the download button is shown.
 
 ## Elementor import compatibility
 The exported JSON follows Elementor template structure:
